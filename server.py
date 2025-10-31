@@ -41,6 +41,11 @@ client = OpenAI(api_key=OPENAI_API_KEY)
 TELEGRAM_URL = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
 TELEGRAM_MAX_MESSAGE = 4096
 
+# Telegram API endpoints
+TELEGRAM_SEND_MESSAGE_URL = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
+TELEGRAM_EDIT_MESSAGE_URL = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/editMessageText"
+TELEGRAM_ANSWER_CALLBACK_URL = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/answerCallbackQuery"
+
 # Requests session with retries and timeouts
 session = requests.Session()
 retries = Retry(total=3, backoff_factor=1, status_forcelist=[429, 500, 502, 503, 504])
@@ -268,6 +273,205 @@ def truncate_text(text: str, limit: int) -> str:
     return text[: max(0, limit - len(note))] + note
 
 
+def send_message_with_keyboard(chat_id: int, text: str, keyboard: Optional[List[List[Dict]]] = None):
+    """Send a message with an inline keyboard to Telegram."""
+    try:
+        payload = {
+            "chat_id": chat_id,
+            "text": escape_markdown_v2(text),
+            "parse_mode": "MarkdownV2",
+        }
+        
+        if keyboard:
+            payload["reply_markup"] = {"inline_keyboard": keyboard}
+        
+        response = session.post(TELEGRAM_SEND_MESSAGE_URL, json=payload, timeout=3)
+        response.raise_for_status()
+        return True
+    except Exception as e:
+        logger.error(f"Failed to send message with keyboard to chat {chat_id}: {e}")
+        return False
+
+
+def get_main_menu_keyboard() -> List[List[Dict]]:
+    """Create the main menu keyboard with action buttons."""
+    return [
+        [
+            {"text": "💰 Prezzi Crypto", "callback_data": "menu_prices"},
+            {"text": "📊 Mercato", "callback_data": "action_market"}
+        ],
+        [
+            {"text": "🔔 Alert Prezzo", "callback_data": "menu_alerts"},
+            {"text": "📈 Monitora Variazioni", "callback_data": "menu_monitor"}
+        ],
+        [
+            {"text": "📋 Il Mio Status", "callback_data": "action_status"},
+            {"text": "❓ Aiuto", "callback_data": "action_help"}
+        ]
+    ]
+
+
+def get_price_keyboard() -> List[List[Dict]]:
+    """Create the price selection keyboard."""
+    return [
+        [
+            {"text": "₿ Bitcoin (BTC)", "callback_data": "price_BTC"},
+            {"text": "Ξ Ethereum (ETH)", "callback_data": "price_ETH"}
+        ],
+        [
+            {"text": "💎 Solana (SOL)", "callback_data": "price_SOL"},
+            {"text": "🔶 BNB", "callback_data": "price_BNB"}
+        ],
+        [
+            {"text": "💵 XRP", "callback_data": "price_XRP"},
+            {"text": "🅰️ Cardano (ADA)", "callback_data": "price_ADA"}
+        ],
+        [
+            {"text": "🔙 Menu Principale", "callback_data": "menu_main"}
+        ]
+    ]
+
+
+def get_alert_menu_keyboard() -> List[List[Dict]]:
+    """Create the alert menu keyboard."""
+    return [
+        [
+            {"text": "➕ Nuovo Alert", "callback_data": "alert_new"},
+            {"text": "📋 I Miei Alert", "callback_data": "action_alerts"}
+        ],
+        [
+            {"text": "🔙 Menu Principale", "callback_data": "menu_main"}
+        ]
+    ]
+
+
+def get_monitor_keyboard() -> List[List[Dict]]:
+    """Create the monitoring menu keyboard."""
+    return [
+        [
+            {"text": "▶️ Avvia Monitoraggio", "callback_data": "monitor_start"},
+            {"text": "⏸️ Stop Monitoraggio", "callback_data": "action_stopmonitor"}
+        ],
+        [
+            {"text": "🔙 Menu Principale", "callback_data": "menu_main"}
+        ]
+    ]
+
+
+def handle_callback_query(chat_id: int, callback_data: str, callback_id: str, message_id: Optional[int] = None):
+    """Handle button press callbacks."""
+    try:
+        # Answer the callback query to remove loading state
+        session.post(TELEGRAM_ANSWER_CALLBACK_URL, json={"callback_query_id": callback_id}, timeout=3)
+        
+        # Handle different callback actions
+        if callback_data == "menu_main":
+            text = "*🏠 Menu Principale*\n\nScegli un'azione:"
+            send_message_with_keyboard(chat_id, text, get_main_menu_keyboard())
+        
+        elif callback_data == "menu_prices":
+            text = "*💰 Prezzi Cryptocurrency*\n\nSeleziona una crypto per vedere il prezzo:"
+            send_message_with_keyboard(chat_id, text, get_price_keyboard())
+        
+        elif callback_data.startswith("price_"):
+            symbol = callback_data[6:]
+            price = get_best_price(symbol)
+            if price:
+                text = f"💰 *{symbol}*: ${price:,.2f} USD"
+            else:
+                text = f"❌ Impossibile recuperare il prezzo per {symbol}"
+            send_message_with_keyboard(chat_id, text, get_price_keyboard())
+        
+        elif callback_data == "action_market":
+            text = get_market_summary()
+            keyboard = [[{"text": "🔙 Menu Principale", "callback_data": "menu_main"}]]
+            send_message_with_keyboard(chat_id, text, keyboard)
+        
+        elif callback_data == "menu_alerts":
+            text = "*🔔 Gestione Alert*\n\nGestisci i tuoi alert di prezzo:"
+            send_message_with_keyboard(chat_id, text, get_alert_menu_keyboard())
+        
+        elif callback_data == "alert_new":
+            text = (
+                "*➕ Nuovo Alert*\n\n"
+                "Per creare un nuovo alert, usa il comando:\n"
+                "`/alert SYMBOL below/above PREZZO`\n\n"
+                "Esempio:\n"
+                "`/alert BTC below 50000`"
+            )
+            send_message_with_keyboard(chat_id, text, get_alert_menu_keyboard())
+        
+        elif callback_data == "action_alerts":
+            user_alerts = price_alerts.get(chat_id, [])
+            if user_alerts:
+                text = "📋 *I Tuoi Alert Attivi:*\n\n"
+                for i, alert in enumerate(user_alerts, 1):
+                    text += f"{i}. *{alert['symbol']}* {'sopra' if alert['direction'] == 'above' else 'sotto'} ${alert['target_price']:,.2f}\n"
+            else:
+                text = "📋 Non hai alert attivi."
+            send_message_with_keyboard(chat_id, text, get_alert_menu_keyboard())
+        
+        elif callback_data == "menu_monitor":
+            text = "*📈 Monitoraggio Variazioni*\n\nMonitora le variazioni di prezzo in tempo reale:"
+            send_message_with_keyboard(chat_id, text, get_monitor_keyboard())
+        
+        elif callback_data == "monitor_start":
+            text = (
+                "*▶️ Avvia Monitoraggio*\n\n"
+                "Per avviare il monitoraggio, usa il comando:\n"
+                "`/monitora SYMBOLS SOGLIA%`\n\n"
+                "Esempio per monitorare BTC, ETH, SOL con soglia 5%:\n"
+                "`/monitora BTC,ETH,SOL 5`"
+            )
+            send_message_with_keyboard(chat_id, text, get_monitor_keyboard())
+        
+        elif callback_data == "action_stopmonitor":
+            if chat_id in price_change_subscriptions:
+                del price_change_subscriptions[chat_id]
+                text = "✅ Monitoraggio prezzi disattivato."
+            else:
+                text = "ℹ️ Non hai un monitoraggio attivo."
+            send_message_with_keyboard(chat_id, text, get_monitor_keyboard())
+        
+        elif callback_data == "action_status":
+            text = "*📊 Il Tuo Status Trading:*\n\n"
+            user_alerts = price_alerts.get(chat_id, [])
+            text += f"*Alert Prezzo:* {len(user_alerts)}\n"
+            
+            if chat_id in price_change_subscriptions:
+                subscription = price_change_subscriptions[chat_id]
+                symbols = ", ".join(subscription["symbols"])
+                threshold = subscription["threshold"]
+                text += f"*Monitoraggio:* ✅ Attivo\n"
+                text += f"  - Simboli: {symbols}\n"
+                text += f"  - Soglia: {threshold}%\n"
+            else:
+                text += "*Monitoraggio:* ❌ Non attivo\n"
+            
+            keyboard = [[{"text": "🔙 Menu Principale", "callback_data": "menu_main"}]]
+            send_message_with_keyboard(chat_id, text, keyboard)
+        
+        elif callback_data == "action_help":
+            text = (
+                "*❓ Aiuto - Comandi Disponibili*\n\n"
+                "*Comandi Diretti:*\n"
+                "• `/price SYMBOL` - Prezzo attuale\n"
+                "• `/mercato` - Riepilogo mercato\n"
+                "• `/alert SYMBOL below/above PREZZO` - Imposta alert\n"
+                "• `/alerts` - Visualizza alert\n"
+                "• `/monitora SYMBOLS SOGLIA` - Monitora variazioni\n"
+                "• `/stopmonitora` - Stop monitoraggio\n"
+                "• `/status` - Il tuo status\n"
+                "• `/menu` - Mostra menu con pulsanti\n\n"
+                "*Oppure usa i pulsanti per navigare!*"
+            )
+            keyboard = [[{"text": "🔙 Menu Principale", "callback_data": "menu_main"}]]
+            send_message_with_keyboard(chat_id, text, keyboard)
+        
+    except Exception as e:
+        logger.error(f"Error handling callback query: {e}")
+
+
 @app.route("/", methods=["GET"])
 def home():
     return "✅ AngelBot-AI (GPT-5) è online e operativo!", 200
@@ -284,6 +488,20 @@ def webhook():
             return jsonify({"ok": False, "error": "Unauthorized"}), 401
 
     data = request.get_json(silent=True)
+    
+    # Handle callback queries (button presses)
+    if data and "callback_query" in data:
+        callback_query = data["callback_query"]
+        callback_data = callback_query.get("data")
+        chat_id = callback_query.get("from", {}).get("id")
+        message_id = callback_query.get("message", {}).get("message_id")
+        callback_id = callback_query.get("id")
+        
+        if callback_data and chat_id:
+            handle_callback_query(chat_id, callback_data, callback_id, message_id)
+        
+        return jsonify({"ok": True}), 200
+    
     if not data or "message" not in data:
         logger.info("Webhook received empty or non-message update: %s", data)
         # Respond 200 to acknowledge the webhook but do not process
@@ -511,34 +729,35 @@ def webhook():
             logger.exception("Failed to send status to chat %s", chat_id)
         return jsonify({"ok": True}), 200
     
-    # Handle basic commands
-    elif text.lower() in ["/start", "/help", "ciao", "hello"]:
-        reply = (
-            "👋 Ciao! Sono *AngelBot-AI*, il tuo assistente di trading personale!\n\n"
-            "💹 *Funzionalità Trading:*\n"
-            "• `/price SYMBOL` - Prezzo attuale (es: /price BTC)\n"
-            "• `/mercato` - Riepilogo mercato crypto\n"
-            "• `/alert SYMBOL below/above PREZZO` - Imposta alert\n"
-            "• `/alerts` - Visualizza i tuoi alert\n\n"
-            "🌐 Posso anche rispondere a domande sul trading e analizzare i mercati in tempo reale!\n"
-            "⚡ Ottimizzato per risposte veloci e precise.\n\n"
-            "Scrivimi qualsiasi cosa sul trading e ti aiuterò!"
-        )
-        # Escape and send reply as MarkdownV2
-        safe = escape_markdown_v2(reply)
-        try:
-            session.post(
-                TELEGRAM_URL,
-                json={
-                    "chat_id": chat_id,
-                    "text": safe,
-                    "parse_mode": "MarkdownV2",
-                    "disable_web_page_preview": True,
-                },
-                timeout=3,  # Reduced timeout for faster response
+    # Handle basic commands with interactive menu
+    elif text.lower() in ["/start", "/help", "/menu", "ciao", "hello"]:
+        if text.lower() == "/help":
+            reply = (
+                "👋 Ciao! Sono *AngelBot-AI*, il tuo assistente di trading personale!\n\n"
+                "💹 *Funzionalità Trading:*\n"
+                "• `/price SYMBOL` - Prezzo attuale\n"
+                "• `/mercato` - Riepilogo mercato\n"
+                "• `/alert SYMBOL below/above PREZZO` - Imposta alert\n"
+                "• `/alerts` - Visualizza alert\n"
+                "• `/monitora SYMBOLS SOGLIA` - Monitora variazioni\n"
+                "• `/status` - Il tuo status\n"
+                "• `/menu` - Mostra menu interattivo\n\n"
+                "🌐 Posso anche rispondere a domande sul trading!\n"
+                "⚡ Usa i pulsanti qui sotto per navigare facilmente!"
             )
-        except Exception:
-            logger.exception("Failed to send command reply to chat %s", chat_id)
+        else:
+            reply = (
+                "👋 Ciao! Sono *AngelBot-AI*, il tuo assistente di trading personale!\n\n"
+                "🎯 *Usa i pulsanti qui sotto per:*\n"
+                "• Controllare prezzi crypto\n"
+                "• Impostare alert di prezzo\n"
+                "• Monitorare variazioni di mercato\n"
+                "• Vedere il tuo status\n\n"
+                "💡 Oppure scrivimi una domanda sul trading e ti aiuterò!"
+            )
+        
+        # Send with interactive keyboard
+        send_message_with_keyboard(chat_id, reply, get_main_menu_keyboard())
         return jsonify({"ok": True}), 200
 
     # Build prompt for the model with trading assistant capabilities
