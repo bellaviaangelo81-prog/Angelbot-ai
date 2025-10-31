@@ -61,6 +61,45 @@ price_alerts: Dict[int, List[Dict]] = {}  # {chat_id: [{"symbol": "BTC", "price"
 price_change_subscriptions: Dict[int, Dict] = {}  # {chat_id: {"symbols": ["BTC", "ETH"], "threshold": 5.0}}
 last_prices: Dict[str, float] = {}  # {symbol: last_price}
 
+# Stock market data organized by region
+STOCKS_BY_REGION = {
+    "USA": {
+        "name": "🇺🇸 Stati Uniti",
+        "stocks": {
+            "AAPL": "Apple",
+            "MSFT": "Microsoft",
+            "GOOGL": "Google",
+            "AMZN": "Amazon",
+            "TSLA": "Tesla",
+            "NVDA": "NVIDIA",
+            "META": "Meta",
+            "JPM": "JPMorgan",
+        }
+    },
+    "EUROPA": {
+        "name": "🇪🇺 Europa",
+        "stocks": {
+            "SAP": "SAP (Germania)",
+            "ASML": "ASML (Olanda)",
+            "NOVO": "Novo Nordisk (Danimarca)",
+            "MC.PA": "LVMH (Francia)",
+            "SIE.DE": "Siemens (Germania)",
+            "OR.PA": "L'Oréal (Francia)",
+        }
+    },
+    "ASIA": {
+        "name": "🌏 Asia",
+        "stocks": {
+            "TSM": "TSMC (Taiwan)",
+            "BABA": "Alibaba (Cina)",
+            "SONY": "Sony (Giappone)",
+            "7203.T": "Toyota (Giappone)",
+            "005930.KS": "Samsung (Corea)",
+            "TCS.NS": "TCS (India)",
+        }
+    },
+}
+
 
 def get_crypto_price(symbol: str) -> Optional[float]:
     """Get current cryptocurrency price from CoinGecko API (free, no API key needed)."""
@@ -133,6 +172,43 @@ def add_price_alert(chat_id: int, symbol: str, target_price: float, direction: s
     price_alerts[chat_id].append(alert)
     
     return f"✅ Alert impostato: ti avviserò quando {symbol.upper()} {'supera' if direction == 'above' else 'scende sotto'} ${target_price:,.2f}"
+
+
+def get_stock_price(symbol: str) -> Optional[Dict]:
+    """Get stock price using Yahoo Finance API."""
+    try:
+        # Use Yahoo Finance query API (no API key needed)
+        url = f"https://query1.finance.yahoo.com/v8/finance/chart/{symbol}"
+        params = {
+            "interval": "1d",
+            "range": "1d"
+        }
+        
+        response = session.get(url, params=params, timeout=5)
+        response.raise_for_status()
+        data = response.json()
+        
+        if "chart" in data and "result" in data["chart"] and data["chart"]["result"]:
+            result = data["chart"]["result"][0]
+            meta = result.get("meta", {})
+            
+            price = meta.get("regularMarketPrice")
+            previous_close = meta.get("previousClose")
+            currency = meta.get("currency", "USD")
+            
+            if price and previous_close:
+                change_percent = ((price - previous_close) / previous_close) * 100
+                return {
+                    "price": price,
+                    "change": change_percent,
+                    "currency": currency,
+                    "symbol": symbol
+                }
+        
+        return None
+    except Exception as e:
+        logger.debug(f"Yahoo Finance API error for {symbol}: {e}")
+        return None
 
 
 def get_binance_price(symbol: str) -> Optional[float]:
@@ -298,14 +374,17 @@ def get_main_menu_keyboard() -> List[List[Dict]]:
     return [
         [
             {"text": "💰 Prezzi Crypto", "callback_data": "menu_prices"},
-            {"text": "📊 Mercato", "callback_data": "action_market"}
+            {"text": "📈 Azioni", "callback_data": "menu_stocks"}
         ],
         [
-            {"text": "🔔 Alert Prezzo", "callback_data": "menu_alerts"},
-            {"text": "📈 Monitora Variazioni", "callback_data": "menu_monitor"}
+            {"text": "📊 Mercato Crypto", "callback_data": "action_market"},
+            {"text": "🔔 Alert Prezzo", "callback_data": "menu_alerts"}
         ],
         [
-            {"text": "📋 Il Mio Status", "callback_data": "action_status"},
+            {"text": "📈 Monitora Variazioni", "callback_data": "menu_monitor"},
+            {"text": "📋 Il Mio Status", "callback_data": "action_status"}
+        ],
+        [
             {"text": "❓ Aiuto", "callback_data": "action_help"}
         ]
     ]
@@ -356,6 +435,50 @@ def get_monitor_keyboard() -> List[List[Dict]]:
             {"text": "🔙 Menu Principale", "callback_data": "menu_main"}
         ]
     ]
+
+
+def get_stocks_menu_keyboard() -> List[List[Dict]]:
+    """Create the stocks menu keyboard with regions."""
+    return [
+        [
+            {"text": "🇺🇸 Stati Uniti (USA)", "callback_data": "stocks_USA"},
+        ],
+        [
+            {"text": "🇪🇺 Europa", "callback_data": "stocks_EUROPA"},
+        ],
+        [
+            {"text": "🌏 Asia", "callback_data": "stocks_ASIA"},
+        ],
+        [
+            {"text": "🔙 Menu Principale", "callback_data": "menu_main"}
+        ]
+    ]
+
+
+def get_region_stocks_keyboard(region: str) -> List[List[Dict]]:
+    """Create keyboard for stocks in a specific region."""
+    if region not in STOCKS_BY_REGION:
+        return [[{"text": "🔙 Menu Azioni", "callback_data": "menu_stocks"}]]
+    
+    stocks = STOCKS_BY_REGION[region]["stocks"]
+    keyboard = []
+    
+    # Add stock buttons (2 per row)
+    stock_items = list(stocks.items())
+    for i in range(0, len(stock_items), 2):
+        row = []
+        for j in range(2):
+            if i + j < len(stock_items):
+                symbol, name = stock_items[i + j]
+                # Truncate long names for button display
+                display_name = name[:20] + "..." if len(name) > 20 else name
+                row.append({"text": display_name, "callback_data": f"stock_{region}_{symbol}"})
+        keyboard.append(row)
+    
+    # Add back button
+    keyboard.append([{"text": "🔙 Menu Azioni", "callback_data": "menu_stocks"}])
+    
+    return keyboard
 
 
 def handle_callback_query(chat_id: int, callback_data: str, callback_id: str, message_id: Optional[int] = None):
@@ -455,8 +578,9 @@ def handle_callback_query(chat_id: int, callback_data: str, callback_id: str, me
             text = (
                 "*❓ Aiuto - Comandi Disponibili*\n\n"
                 "*Comandi Diretti:*\n"
-                "• `/price SYMBOL` - Prezzo attuale\n"
-                "• `/mercato` - Riepilogo mercato\n"
+                "• `/price SYMBOL` - Prezzo crypto\n"
+                "• `/stock SYMBOL` - Prezzo azione\n"
+                "• `/mercato` - Riepilogo mercato crypto\n"
                 "• `/alert SYMBOL below/above PREZZO` - Imposta alert\n"
                 "• `/alerts` - Visualizza alert\n"
                 "• `/monitora SYMBOLS SOGLIA` - Monitora variazioni\n"
@@ -467,6 +591,50 @@ def handle_callback_query(chat_id: int, callback_data: str, callback_id: str, me
             )
             keyboard = [[{"text": "🔙 Menu Principale", "callback_data": "menu_main"}]]
             send_message_with_keyboard(chat_id, text, keyboard)
+        
+        elif callback_data == "menu_stocks":
+            text = "*📈 Mercati Azionari*\n\nSeleziona un continente per vedere le azioni:"
+            send_message_with_keyboard(chat_id, text, get_stocks_menu_keyboard())
+        
+        elif callback_data.startswith("stocks_"):
+            region = callback_data[7:]  # Remove "stocks_" prefix
+            if region in STOCKS_BY_REGION:
+                region_name = STOCKS_BY_REGION[region]["name"]
+                text = f"*{region_name}*\n\nSeleziona un'azione per vedere il prezzo:"
+                send_message_with_keyboard(chat_id, text, get_region_stocks_keyboard(region))
+            else:
+                text = "❌ Regione non trovata"
+                send_message_with_keyboard(chat_id, text, get_stocks_menu_keyboard())
+        
+        elif callback_data.startswith("stock_"):
+            # Format: stock_REGION_SYMBOL
+            parts = callback_data[6:].split("_", 1)  # Remove "stock_" and split once
+            if len(parts) == 2:
+                region, symbol = parts
+                stock_info = get_stock_price(symbol)
+                
+                if stock_info:
+                    price = stock_info["price"]
+                    change = stock_info["change"]
+                    currency = stock_info["currency"]
+                    emoji = "📈" if change > 0 else "📉"
+                    
+                    # Get stock name
+                    stock_name = STOCKS_BY_REGION.get(region, {}).get("stocks", {}).get(symbol, symbol)
+                    
+                    text = (
+                        f"{emoji} *{stock_name}*\n"
+                        f"Simbolo: {symbol}\n"
+                        f"Prezzo: {price:.2f} {currency}\n"
+                        f"Variazione: {change:+.2f}%"
+                    )
+                else:
+                    text = f"❌ Impossibile recuperare il prezzo per {symbol}"
+                
+                send_message_with_keyboard(chat_id, text, get_region_stocks_keyboard(region))
+            else:
+                text = "❌ Errore nel formato del simbolo"
+                send_message_with_keyboard(chat_id, text, get_stocks_menu_keyboard())
         
     except Exception as e:
         logger.error(f"Error handling callback query: {e}")
@@ -553,6 +721,32 @@ def webhook():
             )
         except Exception:
             logger.exception("Failed to send price reply to chat %s", chat_id)
+        return jsonify({"ok": True}), 200
+    
+    elif text.lower().startswith("/stock "):
+        symbol = text[7:].strip().upper()
+        stock_info = get_stock_price(symbol)
+        if stock_info:
+            price = stock_info["price"]
+            change = stock_info["change"]
+            currency = stock_info["currency"]
+            emoji = "📈" if change > 0 else "📉"
+            reply = f"{emoji} *{symbol}*: {price:.2f} {currency} ({change:+.2f}%)"
+        else:
+            reply = f"❌ Non riesco a trovare il prezzo per {symbol}. Usa /menu per vedere le azioni disponibili."
+        safe = escape_markdown_v2(reply)
+        try:
+            session.post(
+                TELEGRAM_URL,
+                json={
+                    "chat_id": chat_id,
+                    "text": safe,
+                    "parse_mode": "MarkdownV2",
+                },
+                timeout=3,
+            )
+        except Exception:
+            logger.exception("Failed to send stock price reply to chat %s", chat_id)
         return jsonify({"ok": True}), 200
     
     elif text.lower() == "/mercato":
@@ -735,8 +929,9 @@ def webhook():
             reply = (
                 "👋 Ciao! Sono *AngelBot-AI*, il tuo assistente di trading personale!\n\n"
                 "💹 *Funzionalità Trading:*\n"
-                "• `/price SYMBOL` - Prezzo attuale\n"
-                "• `/mercato` - Riepilogo mercato\n"
+                "• `/price SYMBOL` - Prezzo crypto\n"
+                "• `/stock SYMBOL` - Prezzo azione\n"
+                "• `/mercato` - Riepilogo mercato crypto\n"
                 "• `/alert SYMBOL below/above PREZZO` - Imposta alert\n"
                 "• `/alerts` - Visualizza alert\n"
                 "• `/monitora SYMBOLS SOGLIA` - Monitora variazioni\n"
@@ -749,10 +944,11 @@ def webhook():
             reply = (
                 "👋 Ciao! Sono *AngelBot-AI*, il tuo assistente di trading personale!\n\n"
                 "🎯 *Usa i pulsanti qui sotto per:*\n"
-                "• Controllare prezzi crypto\n"
-                "• Impostare alert di prezzo\n"
-                "• Monitorare variazioni di mercato\n"
-                "• Vedere il tuo status\n\n"
+                "• 💰 Controllare prezzi crypto e azioni\n"
+                "• 📈 Vedere azioni organizzate per continente\n"
+                "• 🔔 Impostare alert di prezzo\n"
+                "• 📊 Monitorare variazioni di mercato\n"
+                "• 📋 Vedere il tuo status\n\n"
                 "💡 Oppure scrivimi una domanda sul trading e ti aiuterò!"
             )
         
@@ -769,7 +965,8 @@ def webhook():
         f"Data e ora attuale: {current_date}. "
         f"Specializzato in:\n"
         f"- Analisi tecnica e fondamentale\n"
-        f"- Criptovalute, azioni, forex\n"
+        f"- Criptovalute e azioni internazionali (USA, Europa, Asia)\n"
+        f"- Mercati azionari globali organizzati per continente\n"
         f"- Strategie di trading e gestione del rischio\n"
         f"- Notizie di mercato in tempo reale\n"
         f"- Analisi dei trend e pattern di mercato\n\n"
@@ -777,7 +974,8 @@ def webhook():
         f"1. Fornisci dati aggiornati usando le tue capacità web\n"
         f"2. Analizza trend e pattern\n"
         f"3. Suggerisci strategie quando appropriato\n"
-        f"4. Avverti sempre sui rischi del trading\n\n"
+        f"4. Considera sia crypto che azioni\n"
+        f"5. Avverti sempre sui rischi del trading\n\n"
         f"Rispondi in italiano, in modo chiaro e professionale."
     )
     
