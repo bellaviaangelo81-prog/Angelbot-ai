@@ -1,68 +1,63 @@
-from flask import Flask, request
-from openai import OpenAI
 import os
+import re
+import logging
+from typing import Optional
+
 import requests
+from requests.adapters import HTTPAdapter, Retry
+from flask import Flask, request, jsonify, abort
+from openai import OpenAI
+
+# Config logging
+logging.basicConfig(level=os.getenv("LOG_LEVEL", "INFO"))
+logger = logging.getLogger(__name__)
 
 app = Flask(__name__)
 
+# === CONFIGURATION ===
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
+# Optional: secret token to verify Telegram webhook source (set in setWebhook secret_token)
+TELEGRAM_SECRET_TOKEN = os.getenv("TELEGRAM_SECRET_TOKEN")
 
+# Validate required env vars early (avoid leaking tokens in logs)
+missing = []
+if not TELEGRAM_TOKEN:
+    missing.append("TELEGRAM_TOKEN")
+if not OPENAI_API_KEY:
+    missing.append("OPENAI_API_KEY")
+if missing:
+    logger.error("Missing required environment variables: %s", ", ".join(missing))
+    # Exit early to fail fast in the runtime environment
+    raise SystemExit(1)
+
+# Initialize OpenAI client
 client = OpenAI(api_key=OPENAI_API_KEY)
+
 TELEGRAM_URL = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
 
+# Requests session with retries and timeouts
+session = requests.Session()
+retries = Retry(total=3, backoff_factor=1, status_forcelist=[429, 500, 502, 503, 504])
+adapter = HTTPAdapter(max_retries=retries)
+session.mount("https://", adapter)
+session.headers.update({"Content-Type": "application/json"})
 
-@app.route("/", methods=["GET"])
-def home():
-    return "✅ AngelBot-AI (GPT-5) è online e operativo!", 200
+# Telegram limits
+TELEGRAM_MAX_MESSAGE = 4096
 
+# Characters to escape for MarkdownV2 according to Telegram docs
+_MD_V2_CHARS_RE = re.compile(r"([_\*\[\]\(\)~`>#+\-=|{}.!\\])")
 
-@app.route("/webhook", methods=["POST"])
-def webhook():
-    data = request.get_json()
-
-    if not data or "message" not in data:
-        return {"ok": False, "error": "Nessun messaggio ricevuto"}, 200
-
-    message = data["message"]
-    chat_id = message["chat"]["id"]
-    text = message.get("text", "").strip()
-
-    # Se non c’è testo, non rispondere
+def escape_markdown_v2(text: str) -> str:
+    """Escape text for Telegram MarkdownV2."""
     if not text:
-        return {"ok": True, "note": "Messaggio vuoto"}, 200
+        return text
+    return _MD_V2_CHARS_RE.sub(r"\\\1", text)
 
-    # Gestione dei comandi base
-    if text.lower() in ["/start", "ciao", "hello"]:
-        reply = (
-            "👋 Ciao! Sono **AngelBot-AI**, potenziato da GPT-5.\n"
-            "Scrivimi qualsiasi cosa e ti risponderò come un vero assistente AI."
-        )
-    else:
-        try:
-            # Richiesta al modello GPT-5
-            response = client.responses.create(
-                model="gpt-5",
-                input=f"L'utente dice: {text}",
-                reasoning={"effort": "medium"},
-                text={"verbosity": "medium"}
-            )
-
-            reply = response.output_text.strip()
-
-        except Exception as e:
-            reply = f"⚠️ Errore con l'AI: {str(e)}"
-
-    # Invia la risposta su Telegram
-    requests.post(TELEGRAM_URL, json={
-        "chat_id": chat_id,
-        "text": reply,
-        "parse_mode": "Markdown"
-    })
-
-    return {"ok": True}, 200
-
-
-if __name__ == "__main__":
-    port = int(os.environ.get("PORT", 5000))
-    app.run(host="0.0.0.0", port=port)
+def truncate_text(text: str, limit: int) -> str:
+    if len(text) <= limit:
+        return text
+    # Reserve some space for a truncation note
+    note = "\n\n[...] (troncato)"
+    return text[:limit - len(note)] + note
