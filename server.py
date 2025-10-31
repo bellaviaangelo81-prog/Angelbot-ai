@@ -1,63 +1,35 @@
+from flask import Flask, request
 import os
-import re
-import logging
-from typing import Optional
-
 import requests
-from requests.adapters import HTTPAdapter, Retry
-from flask import Flask, request, jsonify, abort
-from openai import OpenAI
-
-# Config logging
-logging.basicConfig(level=os.getenv("LOG_LEVEL", "INFO"))
-logger = logging.getLogger(__name__)
 
 app = Flask(__name__)
 
-# === CONFIGURATION ===
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
-# Optional: secret token to verify Telegram webhook source (set in setWebhook secret_token)
-TELEGRAM_SECRET_TOKEN = os.getenv("TELEGRAM_SECRET_TOKEN")
 
-# Validate required env vars early (avoid leaking tokens in logs)
-missing = []
-if not TELEGRAM_TOKEN:
-    missing.append("TELEGRAM_TOKEN")
-if not OPENAI_API_KEY:
-    missing.append("OPENAI_API_KEY")
-if missing:
-    logger.error("Missing required environment variables: %s", ", ".join(missing))
-    # Exit early to fail fast in the runtime environment
-    raise SystemExit(1)
+@app.route('/')
+def home():
+    return "Bot attivo su Render 🚀"
 
-# Initialize OpenAI client
-client = OpenAI(api_key=OPENAI_API_KEY)
+@app.route('/webhook', methods=['POST'])
+def webhook():
+    data = request.get_json()
+    if not data:
+        return {"ok": False}
 
-TELEGRAM_URL = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
+    chat_id = data['message']['chat']['id']
+    text = data['message'].get('text', '')
 
-# Requests session with retries and timeouts
-session = requests.Session()
-retries = Retry(total=3, backoff_factor=1, status_forcelist=[429, 500, 502, 503, 504])
-adapter = HTTPAdapter(max_retries=retries)
-session.mount("https://", adapter)
-session.headers.update({"Content-Type": "application/json"})
+    # Risposta di test
+    reply = f"Hai detto: {text}"
+    send_message(chat_id, reply)
+    return {"ok": True}
 
-# Telegram limits
-TELEGRAM_MAX_MESSAGE = 4096
+def send_message(chat_id, text):
+    url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
+    payload = {"chat_id": chat_id, "text": text}
+    requests.post(url, json=payload)
 
-# Characters to escape for MarkdownV2 according to Telegram docs
-_MD_V2_CHARS_RE = re.compile(r"([_\*\[\]\(\)~`>#+\-=|{}.!\\])")
-
-def escape_markdown_v2(text: str) -> str:
-    """Escape text for Telegram MarkdownV2."""
-    if not text:
-        return text
-    return _MD_V2_CHARS_RE.sub(r"\\\1", text)
-
-def truncate_text(text: str, limit: int) -> str:
-    if len(text) <= limit:
-        return text
-    # Reserve some space for a truncation note
-    note = "\n\n[...] (troncato)"
-    return text[:limit - len(note)] + note
+if __name__ == '__main__':
+    port = int(os.environ.get("PORT", 10000))
+    app.run(host="0.0.0.0", port=port)
