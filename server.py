@@ -11,7 +11,7 @@ URL = f"https://api.telegram.org/bot{TOKEN}/"
 def home():
     return "✅ AngelBot-AI è online!"
 
-@app.route('/' + TOKEN, methods=['POST'])
+@app.route('/webhook', methods=['POST'])
 def webhook():
     data = request.get_json()
     print(data)
@@ -23,7 +23,7 @@ def webhook():
         reply = f"Ciao 👋, hai scritto: {text}"
         requests.get(URL + f"sendMessage?chat_id={chat_id}&text={reply}")
 
-    return {"ok": True}
+    return {"ok": True}, 200
 
 if __name__ == '__main__':
     app.run(host="0.0.0.0", port=10000)
