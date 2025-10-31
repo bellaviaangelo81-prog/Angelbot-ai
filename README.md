@@ -114,7 +114,26 @@ git push heroku main
 
 Poi configura il webhook con l'URL di Heroku.
 
-### Railway / Render
+### Render
+
+```bash
+# 1. Crea nuovo Web Service su Render
+# 2. Connetti il repository
+# 3. Configura:
+#    Build Command: pip install -r requirements.txt
+#    Start Command: gunicorn server:app
+# 4. Aggiungi variabili d'ambiente:
+TELEGRAM_TOKEN=xxx
+OPENAI_API_KEY=xxx
+TELEGRAM_SECRET_TOKEN=xxx
+# 5. Deploy
+```
+
+Poi configura il webhook con l'URL Render (es: `https://tuo-servizio.onrender.com/webhook`).
+
+**Importante**: Se vedi "Application exited early", assicurati che le variabili d'ambiente siano configurate correttamente.
+
+### Railway
 
 1. Connetti il repository
 2. Imposta le variabili d'ambiente

@@ -136,6 +136,59 @@ Dovresti vedere:
 2. Verifica che `OPENAI_API_KEY` sia valida
 3. Controlla i log per messaggi di errore specifici
 
+### "Application exited early" su Render
+
+**Causa**: Le variabili d'ambiente non sono configurate, causando l'uscita del server all'avvio.
+
+**Soluzione**:
+1. Vai su Render Dashboard → Il tuo servizio → Environment
+2. Aggiungi queste variabili:
+   - `TELEGRAM_TOKEN` = il tuo token
+   - `OPENAI_API_KEY` = la tua chiave
+   - `TELEGRAM_SECRET_TOKEN` = un token segreto (opzionale)
+3. Clicca "Save Changes"
+4. Il servizio si riavvierà automaticamente
+
+**Verifica nei log**:
+- Se vedi "Missing required environment variables", le variabili non sono impostate
+- Se il server parte correttamente, vedrai "Running on http://0.0.0.0:..."
+
+## Deploy su Render
+
+1. **Crea un nuovo Web Service**:
+   - Vai su [Render Dashboard](https://dashboard.render.com/)
+   - Clicca "New +" → "Web Service"
+   - Connetti il tuo repository GitHub
+
+2. **Configura il servizio**:
+   - **Name**: `angelbot-ai` (o un nome a tua scelta)
+   - **Environment**: `Python 3`
+   - **Build Command**: `pip install -r requirements.txt`
+   - **Start Command**: `gunicorn server:app` (o `python server.py`)
+   - **Plan**: Free
+
+3. **Aggiungi variabili d'ambiente** (IMPORTANTE):
+   - `TELEGRAM_TOKEN` = il tuo token da BotFather
+   - `OPENAI_API_KEY` = la tua chiave OpenAI
+   - `TELEGRAM_SECRET_TOKEN` = un token segreto (opzionale ma consigliato)
+
+4. **Deploy**:
+   - Clicca "Create Web Service"
+   - Attendi il completamento del build
+
+5. **Configura il webhook**:
+   ```bash
+   curl -X POST "https://api.telegram.org/bot<TOKEN>/setWebhook" \
+     -H "Content-Type: application/json" \
+     -d '{
+       "url": "https://tuo-servizio.onrender.com/webhook",
+       "allowed_updates": ["message", "callback_query"],
+       "drop_pending_updates": true
+     }'
+   ```
+
+**Nota**: Render fornisce automaticamente la variabile `PORT`, non serve configurarla.
+
 ## Deploy su Heroku
 
 1. **Crea un'app Heroku**:
