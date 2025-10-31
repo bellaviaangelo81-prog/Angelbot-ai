@@ -39,14 +39,17 @@ def webhook():
     else:
         try:
             # Richiesta a GPT-5
-            response = client.chat.completions.create(
-                model="gpt-5",  # <<< qui usiamo GPT-5
-                messages=[
-                    {"role": "system", "content": "Sei AngelBot-AI, un assistente Telegram gentile, utile e chiaro. Rispondi in italiano."},
-                    {"role": "user", "content": text}
-                ],
-                max_tokens=300,
-                temperature=0.8
+response = client.chat.completions.create(
+    model="gpt-5",  # <<< qui usiamo GPT-5
+    messages=[
+        {"role": "system", "content": "Sei AngelBot, un assistente utile e simpatico."},
+        {"role": "user", "content": text}
+    ],
+    max_completion_tokens=300,  # <-- PARAMETRO CORRETTO
+    temperature=0.8
+)
+
+reply = response.choices[0].message.content.strip()
             )
 
             reply = response.choices[0].message.content.strip()
