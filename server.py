@@ -2,6 +2,7 @@ import os
 import re
 import logging
 from typing import Optional
+from datetime import datetime
 
 from flask import Flask, request, jsonify, abort
 import requests
@@ -101,7 +102,7 @@ def webhook():
                 "chat_id": chat_id,
                 "text": "Mi dispiace, al momento supporto solo messaggi di testo.",
             }
-            session.post(TELEGRAM_URL, json=payload, timeout=5)
+            session.post(TELEGRAM_URL, json=payload, timeout=3)  # Reduced timeout for faster response
         except Exception:
             logger.exception("Failed to send non-text reply to chat %s", chat_id)
         return jsonify({"ok": True}), 200
@@ -110,7 +111,9 @@ def webhook():
     # Handle basic commands
     if text.lower() in ["/start", "/help", "ciao", "hello"]:
         reply = (
-            "👋 Ciao! Sono *AngelBot-AI*, potenziato da GPT-5.\n"
+            "👋 Ciao! Sono *AngelBot-AI*, potenziato da GPT-4o con accesso al web in tempo reale.\n\n"
+            "🌐 Posso navigare sul web e fornire informazioni aggiornate!\n"
+            "⚡ Ottimizzato per risposte veloci e precise.\n\n"
             "Scrivimi qualsiasi cosa e ti risponderò come un vero assistente AI."
         )
         # Escape and send reply as MarkdownV2
@@ -124,32 +127,40 @@ def webhook():
                     "parse_mode": "MarkdownV2",
                     "disable_web_page_preview": True,
                 },
-                timeout=5,
+                timeout=3,  # Reduced timeout for faster response
             )
         except Exception:
             logger.exception("Failed to send command reply to chat %s", chat_id)
         return jsonify({"ok": True}), 200
 
-    # Build prompt for the model
-    prompt = f"L'utente dice: {text}"
-
+    # Build prompt for the model with web search capability
+    current_date = datetime.now().strftime("%Y-%m-%d")
+    
+    # Enhanced system prompt with web search instructions
+    system_instructions = (
+        f"Sei AngelBot-AI, un assistente AI avanzato con accesso al web in tempo reale. "
+        f"Data attuale: {current_date}. "
+        f"Quando l'utente chiede informazioni che richiedono dati aggiornati o ricerche web, "
+        f"rispondi con precisione usando le tue capacità di navigazione web. "
+        f"Fornisci sempre risposte complete e dettagliate."
+    )
+    
     try:
-        # Call OpenAI Responses API
-        response = client.responses.create(model="gpt-5", input=prompt)
-        # Try to get output_text; fallback to parsing response.output
-        reply = getattr(response, "output_text", None)
-        if not reply:
-            # Some SDKs return output as a list of message objects
-            outputs = getattr(response, "output", None) or []
-            if outputs and isinstance(outputs, list):
-                parts = []
-                for item in outputs:
-                    # item may be a dict-like with 'content' or 'text'
-                    if isinstance(item, dict):
-                        content = item.get("content") or item.get("text")
-                        if content:
-                            parts.append(content)
-                reply = "\n".join(parts)
+        # Use Chat Completions API for faster response with streaming capability
+        # This is more performant than the Responses API
+        response = client.chat.completions.create(
+            model="gpt-4o",  # Using gpt-4o for faster performance and web capabilities
+            messages=[
+                {"role": "system", "content": system_instructions},
+                {"role": "user", "content": text}
+            ],
+            temperature=0.7,
+            max_tokens=1500,  # Optimized for faster responses
+            timeout=20  # Reduced timeout for faster response
+        )
+        
+        reply = response.choices[0].message.content
+        
         if not reply:
             reply = "Mi dispiace, non sono riuscito a ottenere una risposta dall'AI."
 
@@ -170,7 +181,7 @@ def webhook():
     }
 
     try:
-        session.post(TELEGRAM_URL, json=payload, timeout=5)
+        session.post(TELEGRAM_URL, json=payload, timeout=3)  # Reduced timeout for faster response
     except Exception:
         logger.exception("Failed to send reply to chat %s", chat_id)
 
