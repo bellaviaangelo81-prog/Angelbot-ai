@@ -4,55 +4,44 @@ import os
 
 app = Flask(__name__)
 
-# --- TOKEN TELEGRAM ---
-TOKEN = os.getenv("BOT_TOKEN", "8497761155:AAEpJggDUpnWVC7wR6OCJpQdsAr4lFruxQ8")
-URL = f"https://api.telegram.org/bot{TOKEN}/"
+TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 
-# --- HOME PAGE ---
+# URL base di Telegram
+TELEGRAM_URL = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}"
+
 @app.route('/')
 def home():
-    return "✅ AngelBot-AI è online e operativo!"
+    return "✅ AngelBot-AI con Intelligenza Artificiale è online!"
 
-# --- WEBHOOK TELEGRAM ---
 @app.route('/webhook', methods=['POST'])
 def webhook():
     data = request.get_json()
-    print("📩 Dati ricevuti dal webhook:", data)
 
-    if "message" in data:
-        chat_id = data["message"]["chat"]["id"]
-        text = data["message"].get("text", "").strip()
+    if not data:
+        return {"ok": False, "error": "Nessun JSON ricevuto"}
 
-        # Gestione comandi
-        if text == "/start":
-            reply = (
-                "👋 Benvenuto su *AngelBot-AI!*\n\n"
-                "Puoi usare questi comandi:\n"
-                "• `/start` → avvia il bot\n"
-                "• `/info` → scopri cosa può fare\n"
-                "• `/ai [domanda]` → ricevi una risposta intelligente\n\n"
-                "Scrivi ad esempio `/ai qual è la capitale del Giappone?`"
-            )
-        elif text == "/info":
-            reply = (
-                "ℹ️ *AngelBot-AI* è un bot Telegram creato per parlare, "
-                "fornire informazioni e collegarsi a servizi intelligenti. "
-                "In futuro potrà analizzare dati, prevedere mercati, "
-                "o darti risposte con intelligenza artificiale."
-            )
-        elif text.startswith("/ai "):
-            domanda = text[4:]
-            reply = f"🧠 (Risposta simulata) Hai chiesto: {domanda}\n\nRisposta: la sto elaborando con logica e dati!"
-        else:
-            reply = f"Hai scritto: {text}"
+    message = data.get("message", {})
+    chat_id = message.get("chat", {}).get("id")
+    text = message.get("text")
 
-        # Invia risposta
-        requests.get(URL + f"sendMessage?chat_id={chat_id}&text={reply}&parse_mode=Markdown")
+    if not chat_id or not text:
+        return {"ok": True}
 
-    return {"ok": True}, 200
+    # Risposte base
+    if text.lower() in ["/start", "ciao", "hello"]:
+        reply = "Ciao 👋 Sono AngelBot-AI! Come posso aiutarti oggi?"
+    elif "meteo" in text.lower():
+        reply = "🌤️ Al momento non posso consultare i dati meteo reali, ma presto potrò!"
+    elif "notizie" in text.lower():
+        reply = "📰 Le ultime notizie? Sto lavorando per portarti aggiornamenti in tempo reale!"
+    else:
+        reply = "🤖 Al momento rispondo solo a comandi base, ma sto migliorando!"
 
+    # Invia la risposta a Telegram
+    requests.post(f"{TELEGRAM_URL}/sendMessage", json={"chat_id": chat_id, "text": reply})
 
-# --- AVVIO SERVER ---
+    return {"ok": True}
+
 if __name__ == '__main__':
-    port = int(os.environ.get("PORT", 10000))
-    app.run(host="0.0.0.0", port=port)
+    app.run(host='0.0.0.0', port=10000)
