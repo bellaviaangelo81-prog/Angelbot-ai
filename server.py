@@ -1,66 +1,67 @@
 from flask import Flask, request
-import requests
-import os
 from openai import OpenAI
+import os
+import requests
 
+# Inizializza Flask
 app = Flask(__name__)
 
-# Legge i token dalle variabili d'ambiente
+# Configurazione chiavi
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 
-# Inizializza il client OpenAI
+# Inizializza client GPT-5
 client = OpenAI(api_key=OPENAI_API_KEY)
 
-# URL base per Telegram
-TELEGRAM_URL = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}"
+# URL base di Telegram
+TELEGRAM_URL = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
 
-@app.route('/')
-def home():
-    return "✅ AngelBot-AI (GPT-5) è online e pronto a rispondere!"
 
-@app.route('/webhook', methods=['POST'])
+@app.route("/webhook", methods=["POST"])
 def webhook():
+    """Riceve gli aggiornamenti da Telegram."""
     data = request.get_json()
 
-    if not data:
-        return {"ok": False, "error": "Nessun JSON ricevuto"}
+    if not data or "message" not in data:
+        return "no message", 200
 
-    message = data.get("message", {})
-    chat_id = message.get("chat", {}).get("id")
-    text = message.get("text")
+    message = data["message"]
+    chat_id = message["chat"]["id"]
+    user_text = message.get("text", "")
 
-    if not chat_id or not text:
-        return {"ok": True}
+    # Se non c’è testo, ignora
+    if not user_text:
+        return "no text", 200
 
-    # Risposte base /start e saluto
-    if text.lower() in ["/start", "ciao", "hello"]:
-        reply = "Ciao 👋 Sono AngelBot-AI, potenziato da GPT-5! Dimmi qualcosa e ti risponderò con intelligenza 🤖"
-    else:
-        try:
-            # Richiesta a GPT-5
-response = client.chat.completions.create(
-    model="gpt-5",  # <<< qui usiamo GPT-5
-    messages=[
-        {"role": "system", "content": "Sei AngelBot, un assistente utile e simpatico."},
-        {"role": "user", "content": text}
-    ],
-    max_completion_tokens=300,  # <-- PARAMETRO CORRETTO
-    temperature=0.8
-)
+    try:
+        # Chiamata a GPT-5
+        response = client.responses.create(
+            model="gpt-5",
+            input=user_text,
+            reasoning={"effort": "medium"},     # Può essere "low", "medium" o "high"
+            text={"verbosity": "medium"}        # Controlla la lunghezza delle risposte
+        )
 
-reply = response.choices[0].message.content.strip()
-            )
+        # Estrai testo di output
+        bot_reply = response.output_text.strip()
 
-            reply = response.choices[0].message.content.strip()
+    except Exception as e:
+        bot_reply = f"Errore durante la risposta: {e}"
 
-        except Exception as e:
-            reply = f"⚠️ Errore con l'AI: {str(e)}"
+    # Invia la risposta a Telegram
+    requests.post(TELEGRAM_URL, json={
+        "chat_id": chat_id,
+        "text": bot_reply
+    })
 
-    # Invia la risposta al messaggio su Telegram
-    requests.post(f"{TELEGRAM_URL}/sendMessage", json={"chat_id": chat_id, "text": reply})
+    return "ok", 200
 
-    return {"ok": True}
 
-if __name__ == '__main__':
-    app.run(host='0.0.0.0', port=10000)
+@app.route("/", methods=["GET"])
+def index():
+    return "Bot GPT-5 attivo e funzionante!", 200
+
+
+if __name__ == "__main__":
+    # Avvia il server Flask
+    app.run(host="0.0.0.0", port=5000, debug=True)
