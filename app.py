@@ -1,206 +1,188 @@
 from flask import Flask, request
+from telegram import (
+    Update, InlineKeyboardButton, InlineKeyboardMarkup
+)
+from telegram.ext import (
+    Application, CommandHandler, CallbackQueryHandler,
+    MessageHandler, filters, ContextTypes
+)
 import os
 import yfinance as yf
-import matplotlib
-matplotlib.use('Agg')
 import matplotlib.pyplot as plt
-from io import BytesIO
-from telegram import Update, InlineKeyboardMarkup, InlineKeyboardButton
-from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes, CallbackQueryHandler
-import asyncio
-import logging
-import datetime
-import random
+import pandas as pd
+import io
 
-# --- CONFIGURAZIONE BASE ---
-logging.basicConfig(
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    level=logging.INFO
-)
-logger = logging.getLogger(__name__)
+app_flask = Flask(__name__)
 
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
-WEBHOOK_URL = os.getenv("WEBHOOK_URL")
+WEBHOOK_URL = os.getenv("WEBHOOK_URL", "https://angelbot-ai.onrender.com")
 
-app = Flask(__name__)
+app_telegram = Application.builder().token(TELEGRAM_TOKEN).build()
 
-# Stato utenti (in futuro → database)
-user_settings = {}  # {chat_id: {"interval": "giornaliero", "symbols": ["AAPL", "TSLA"]}}
+# ───────────────────────────────────────────────
+# Lista titoli principali (USA, Europa, Asia)
+# ───────────────────────────────────────────────
+TICKERS = {
+    "🇺🇸 Stati Uniti": [
+        ("AAPL / Apple", "AAPL"),
+        ("AMZN / Amazon", "AMZN"),
+        ("MSFT / Microsoft", "MSFT"),
+        ("GOOGL / Alphabet", "GOOGL"),
+        ("META / Meta", "META"),
+        ("TSLA / Tesla", "TSLA"),
+        ("NVDA / Nvidia", "NVDA"),
+    ],
+    "🇪🇺 Europa": [
+        ("ISP / Intesa Sanpaolo", "ISP.MI"),
+        ("BMPS / Monte dei Paschi", "BMPS.MI"),
+        ("ENI / ENI", "ENI.MI"),
+        ("LVMH / LVMH", "MC.PA"),
+        ("AIR / Airbus", "AIR.PA"),
+    ],
+    "🇨🇳 Asia": [
+        ("BIDU / Baidu", "BIDU"),
+        ("BABA / Alibaba", "BABA"),
+        ("SONY / Sony", "SONY"),
+        ("TSM / Taiwan Semiconductor", "TSM"),
+    ]
+}
 
-# --- FUNZIONI UTILI ---
+# Frequenze disponibili
+FREQUENZE = [
+    ("🕐 30 minuti", 30),
+    ("🕓 60 minuti", 60),
+    ("🕕 120 minuti", 120),
+    ("☀️ Giornaliero", 1440),
+    ("📅 Settimanale", 10080),
+    ("❌ Off", 0)
+]
 
-def analisi_titolo(simbolo):
-    """Restituisce un'analisi automatica semplificata."""
-    try:
-        dati = yf.Ticker(simbolo).history(period="1mo")
-        if dati.empty:
-            return "⚠️ Dati non disponibili per questo titolo."
-        variazione = ((dati["Close"][-1] - dati["Close"][0]) / dati["Close"][0]) * 100
-        direzione = "in rialzo 📈" if variazione > 0 else "in ribasso 📉"
-        consiglio = (
-            "potrebbe essere un buon momento per considerare un ingresso"
-            if variazione < -5 else
-            "sta performando bene, ma occhio a eventuali correzioni"
-        )
-        return f"{simbolo} è {direzione} del {variazione:.2f}%. In base al trend, {consiglio}."
-    except Exception as e:
-        return f"Errore nell'analisi di {simbolo}: {e}"
+# Stato utente temporaneo
+user_state = {}
 
-async def invia_notifica(context: ContextTypes.DEFAULT_TYPE, chat_id, simbolo):
-    testo = analisi_titolo(simbolo)
-    await context.bot.send_message(chat_id=chat_id, text=f"📢 Analisi aggiornata per {simbolo}:\n\n{testo}")
 
-# --- COMANDI BASE ---
-
+# ───────────────────────────────────────────────
+# Funzioni principali Telegram
+# ───────────────────────────────────────────────
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_settings.setdefault(update.effective_chat.id, {"interval": None, "symbols": []})
-    testo = (
-        "💼 Benvenuto nel tuo consulente finanziario personale!\n\n"
-        "Puoi usare i seguenti comandi:\n"
-        "• /prezzo <simbolo> → Prezzo attuale\n"
-        "• /grafico <simbolo> → Grafico mensile\n"
-        "• /info <simbolo> → Info aziendali\n"
-        "• /monitoraggio → Imposta frequenza e ricevi analisi automatiche\n"
+    keyboard = [
+        [InlineKeyboardButton("📈 Analisi Titoli", callback_data="analisi")],
+        [InlineKeyboardButton("📊 Monitoraggio", callback_data="monitoraggio")],
+        [InlineKeyboardButton("💬 Consigli automatici", callback_data="consigli")]
+    ]
+    await update.message.reply_text(
+        "Ciao! Sono il tuo consulente AI finanziario.\n"
+        "Scegli un'opzione:",
+        reply_markup=InlineKeyboardMarkup(keyboard)
     )
-    await update.message.reply_text(testo)
 
-async def prezzo(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not context.args:
-        await update.message.reply_text("Scrivi: /prezzo <simbolo>")
-        return
-    simbolo = context.args[0].upper()
-    try:
-        info = yf.Ticker(simbolo).info
-        prezzo = info.get("currentPrice") or info.get("regularMarketPrice")
-        nome = info.get("shortName", simbolo)
-        if prezzo:
-            await update.message.reply_text(f"💰 {nome} ({simbolo})\nPrezzo attuale: {prezzo}$")
-        else:
-            await update.message.reply_text("Non trovo il prezzo per questo simbolo.")
-    except Exception as e:
-        await update.message.reply_text(f"Errore nel recupero dei dati: {e}")
 
-async def grafico(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not context.args:
-        await update.message.reply_text("Scrivi: /grafico <simbolo>")
-        return
-    simbolo = context.args[0].upper()
-    try:
-        dati = yf.Ticker(simbolo).history(period="1mo")
-        if dati.empty:
-            await update.message.reply_text("Dati non trovati per questo simbolo.")
-            return
-        plt.figure()
-        dati["Close"].plot(title=f"Andamento di {simbolo}")
-        plt.xlabel("Data")
-        plt.ylabel("Prezzo ($)")
-        buf = BytesIO()
-        plt.savefig(buf, format="png")
-        buf.seek(0)
-        await update.message.reply_photo(buf)
-        plt.close()
-    except Exception as e:
-        await update.message.reply_text(f"Errore nel generare il grafico: {e}")
+async def analisi(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    keyboard = []
+    for regione, lista in TICKERS.items():
+        buttons = [InlineKeyboardButton(regione, callback_data=f"regione_{regione}")]
+        keyboard.append(buttons)
+    await update.callback_query.message.reply_text(
+        "Scegli una regione:",
+        reply_markup=InlineKeyboardMarkup(keyboard)
+    )
 
-async def info(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not context.args:
-        await update.message.reply_text("Scrivi: /info <simbolo>")
-        return
-    simbolo = context.args[0].upper()
-    try:
-        info = yf.Ticker(simbolo).info
-        nome = info.get("shortName", "N/D")
-        settore = info.get("sector", "N/D")
-        paese = info.get("country", "N/D")
-        cap = info.get("marketCap", "N/D")
-        await update.message.reply_text(
-            f"📊 {nome} ({simbolo})\nSettore: {settore}\nPaese: {paese}\nCapitalizzazione: {cap}"
-        )
-    except Exception as e:
-        await update.message.reply_text(f"Errore nel recupero delle info: {e}")
 
-# --- MONITORAGGIO AUTOMATICO ---
+async def mostra_titoli(update: Update, context: ContextTypes.DEFAULT_TYPE, regione):
+    titoli = TICKERS[regione]
+    keyboard = [
+        [InlineKeyboardButton(nome, callback_data=f"titolo_{symbol}")]
+        for nome, symbol in titoli
+    ]
+    await update.callback_query.message.reply_text(
+        f"Titoli disponibili in {regione}:",
+        reply_markup=InlineKeyboardMarkup(keyboard)
+    )
+
+
+async def mostra_grafico(update: Update, context: ContextTypes.DEFAULT_TYPE, symbol):
+    data = yf.download(symbol, period="6mo", interval="1d")
+    plt.figure()
+    data["Close"].plot(title=symbol)
+    plt.xlabel("Data")
+    plt.ylabel("Prezzo ($)")
+    buf = io.BytesIO()
+    plt.savefig(buf, format="png")
+    buf.seek(0)
+    plt.close()
+    await update.callback_query.message.reply_photo(buf)
+    await update.callback_query.message.reply_text(
+        f"📊 Analisi per {symbol}: Ultimo prezzo {round(data['Close'][-1], 2)} USD."
+    )
+
 
 async def monitoraggio(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Mostra le opzioni di monitoraggio"""
     keyboard = [
-        [InlineKeyboardButton("🕧 30 minuti", callback_data="freq_30")],
-        [InlineKeyboardButton("🕐 60 minuti", callback_data="freq_60")],
-        [InlineKeyboardButton("🕑 120 minuti", callback_data="freq_120")],
-        [InlineKeyboardButton("🌅 Giornaliero", callback_data="freq_day")],
-        [InlineKeyboardButton("📆 Settimanale", callback_data="freq_week")],
-        [InlineKeyboardButton("🚫 Disattiva monitoraggio", callback_data="freq_off")]
+        [InlineKeyboardButton(label, callback_data=f"freq_{minuti}")]
+        for label, minuti in FREQUENZE
     ]
-    reply_markup = InlineKeyboardMarkup(keyboard)
-    await update.message.reply_text("📊 Imposta la frequenza di monitoraggio:", reply_markup=reply_markup)
+    await update.callback_query.message.reply_text(
+        "Seleziona la frequenza di monitoraggio:",
+        reply_markup=InlineKeyboardMarkup(keyboard)
+    )
 
-async def monitoraggio_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Gestisce la selezione delle frequenze"""
+
+# ───────────────────────────────────────────────
+# Gestione callback
+# ───────────────────────────────────────────────
+async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
-    await query.answer()
-    chat_id = query.message.chat_id
-    user = user_settings.setdefault(chat_id, {"interval": None, "symbols": ["AAPL", "TSLA"]})
-    scelta = query.data
+    data = query.data
 
-    mapping = {
-        "freq_30": ("ogni 30 minuti", 30),
-        "freq_60": ("ogni 60 minuti", 60),
-        "freq_120": ("ogni 120 minuti", 120),
-        "freq_day": ("giornaliero", 60 * 24),
-        "freq_week": ("settimanale", 60 * 24 * 7)
-    }
+    if data.startswith("regione_"):
+        regione = data.replace("regione_", "")
+        await mostra_titoli(update, context, regione)
 
-    if scelta == "freq_off":
-        user["interval"] = None
-        await query.edit_message_text("🛑 Monitoraggio disattivato.")
-        return
+    elif data.startswith("titolo_"):
+        symbol = data.replace("titolo_", "")
+        await mostra_grafico(update, context, symbol)
 
-    descrizione, minuti = mapping.get(scelta, ("non impostato", None))
-    user["interval"] = minuti
+    elif data == "analisi":
+        await analisi(update, context)
 
-    await query.edit_message_text(f"✅ Monitoraggio impostato: {descrizione}.")
+    elif data == "monitoraggio":
+        await monitoraggio(update, context)
 
-    # Imposta job periodico
-    job_queue = context.application.job_queue
-    job_name = f"monitor_{chat_id}"
-    existing = job_queue.get_jobs_by_name(job_name)
-    for j in existing:
-        j.schedule_removal()
+    elif data.startswith("freq_"):
+        minuti = int(data.replace("freq_", ""))
+        user_state[update.effective_user.id] = minuti
+        testo = (
+            f"✅ Frequenza impostata su {minuti} minuti."
+            if minuti > 0
+            else "🔕 Monitoraggio disattivato."
+        )
+        await query.message.reply_text(testo)
 
-    async def job(context: ContextTypes.DEFAULT_TYPE):
-        for simbolo in user["symbols"]:
-            await invia_notifica(context, chat_id, simbolo)
 
-    job_queue.run_repeating(job, interval=minuti * 60, name=job_name)
-
-# --- AVVIO BOT ---
-app_bot = ApplicationBuilder().token(TELEGRAM_TOKEN).build()
-
-app_bot.add_handler(CommandHandler("start", start))
-app_bot.add_handler(CommandHandler("prezzo", prezzo))
-app_bot.add_handler(CommandHandler("grafico", grafico))
-app_bot.add_handler(CommandHandler("info", info))
-app_bot.add_handler(CommandHandler("monitoraggio", monitoraggio))
-app_bot.add_handler(CallbackQueryHandler(monitoraggio_callback))
-
-# --- FLASK ROUTES ---
-
-@app.route('/')
-def home():
-    return "Bot finanziario attivo!"
-
-@app.route('/webhook', methods=['POST'])
+# ───────────────────────────────────────────────
+# Flask webhook
+# ───────────────────────────────────────────────
+@app_flask.route("/webhook", methods=["POST"])
 def webhook():
-    try:
-        json_data = request.get_json(force=True)
-        update = Update.de_json(json_data, app_bot.bot)
-        asyncio.run(app_bot.process_update(update))
-        return "ok", 200
-    except Exception as e:
-        logger.error(f"Errore nel webhook: {e}", exc_info=True)
-        return "error", 500
+    data = request.get_json(force=True)
+    update = Update.de_json(data, app_telegram.bot)
+    app_telegram.update_queue.put_nowait(update)
+    return "OK", 200
+
+
+# ───────────────────────────────────────────────
+# Avvio bot
+# ───────────────────────────────────────────────
+def main():
+    app_telegram.add_handler(CommandHandler("start", start))
+    app_telegram.add_handler(CallbackQueryHandler(button_handler))
+
+    app_telegram.run_webhook(
+        listen="0.0.0.0",
+        port=int(os.getenv("PORT", 10000)),
+        webhook_url=f"{WEBHOOK_URL}/webhook"
+    )
+
 
 if __name__ == "__main__":
-    port = int(os.getenv("PORT", 5000))
-    asyncio.run(app_bot.bot.set_webhook(url=WEBHOOK_URL))
-    app.run(host="0.0.0.0", port=port)
+    main()
