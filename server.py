@@ -78,6 +78,35 @@ async def info(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except Exception as e:
         await update.message.reply_text(f"Errore nel recupero delle info: {e}")
 
+# --- AVVIO DEL BOT ---
+# Initialize the Application with proper configuration
+app_bot = ApplicationBuilder().token(TELEGRAM_TOKEN).build()
+
+# Add command handlers
+app_bot.add_handler(CommandHandler("start", start))
+app_bot.add_handler(CommandHandler("prezzo", prezzo))
+app_bot.add_handler(CommandHandler("grafico", grafico))
+app_bot.add_handler(CommandHandler("info", info))
+
+# Bot initialization state
+_bot_initialized = False
+
+def _ensure_bot_initialized():
+    """Lazy initialization of the bot application (called on first webhook request)"""
+    global _bot_initialized
+    if not _bot_initialized:
+        async def init():
+            await app_bot.initialize()
+            webhook_url = os.getenv("WEBHOOK_URL")
+            if webhook_url:
+                await app_bot.bot.set_webhook(url=webhook_url)
+                print(f"✓ Webhook configured: {webhook_url}")
+            else:
+                print("⚠ WEBHOOK_URL not set - bot will not receive updates")
+        
+        asyncio.run(init())
+        _bot_initialized = True
+
 # --- FLASK WEBHOOK ---
 @app.route('/')
 def home():
@@ -85,16 +114,18 @@ def home():
 
 @app.route('/webhook', methods=['POST'])
 def webhook():
-    update = Update.de_json(request.get_json(force=True))
-    asyncio.run(app_bot.process_update(update))
+    """Handle incoming webhook updates from Telegram"""
+    # Ensure bot is initialized on first request
+    _ensure_bot_initialized()
+    
+    async def process():
+        json_data = request.get_json(force=True)
+        update = Update.de_json(json_data, app_bot.bot)
+        await app_bot.process_update(update)
+    
+    # Process the update
+    asyncio.run(process())
     return "ok", 200
-
-# --- AVVIO DEL BOT ---
-app_bot = ApplicationBuilder().token(TELEGRAM_TOKEN).build()
-app_bot.add_handler(CommandHandler("start", start))
-app_bot.add_handler(CommandHandler("prezzo", prezzo))
-app_bot.add_handler(CommandHandler("grafico", grafico))
-app_bot.add_handler(CommandHandler("info", info))
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=int(os.environ.get('PORT', 5000)))
