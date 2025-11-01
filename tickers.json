@@ -1,0 +1,41 @@
+{
+  "USA": {
+    "AAPL": "Apple Inc.",
+    "MSFT": "Microsoft Corporation",
+    "AMZN": "Amazon.com Inc.",
+    "TSLA": "Tesla Inc.",
+    "NVDA": "NVIDIA Corporation",
+    "META": "Meta Platforms Inc.",
+    "GOOGL": "Alphabet Inc.",
+    "BRK-B": "Berkshire Hathaway",
+    "JPM": "JPMorgan Chase & Co.",
+    "XOM": "Exxon Mobil Corporation",
+    "BIDU": "Baidu Inc."
+  },
+  "Europa": {
+    "BMPS.MI": "Banca Monte dei Paschi di Siena",
+    "ISP.MI": "Intesa Sanpaolo",
+    "ENI.MI": "ENI S.p.A.",
+    "LUX.MI": "EssilorLuxottica",
+    "RACE.MI": "Ferrari N.V.",
+    "BMW.DE": "BMW AG",
+    "VOW3.DE": "Volkswagen AG",
+    "AIR.PA": "Airbus SE",
+    "SAN.PA": "Sanofi",
+    "AZN.L": "AstraZeneca"
+  },
+  "Asia": {
+    "SONY": "Sony Group Corporation",
+    "7203.T": "Toyota Motor Corporation",
+    "BABA": "Alibaba Group Holding Ltd",
+    "BIDU": "Baidu, Inc.",
+    "TCEHY": "Tencent Holdings Ltd",
+    "005930.KS": "Samsung Electronics",
+    "TSM": "Taiwan Semiconductor Manufacturing Company",
+    "9984.T": "SoftBank Group Corp.",
+    "1211.HK": "BYD Company Limited"
+  },
+  "Africa": {},
+  "Oceania": {},
+  "America Latina": {}
+}
