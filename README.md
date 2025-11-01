@@ -194,11 +194,49 @@ app = ApplicationBuilder().token(TOKEN).build()
 
 Assicurati di usare `python-telegram-bot>=20.0` e di aver rimosso tutti i riferimenti a `Updater`.
 
+### Il bot non risponde ai comandi
+
+**Causa principale:** Il webhook non è configurato correttamente.
+
+**Soluzione:**
+
+1. **Verifica la variabile WEBHOOK_URL** - Deve includere il path `/webhook`:
+   ```bash
+   # ✓ CORRETTO
+   WEBHOOK_URL=https://your-app-url.onrender.com/webhook
+   
+   # ✗ SBAGLIATO (manca /webhook)
+   WEBHOOK_URL=https://your-app-url.onrender.com
+   ```
+
+2. **Controlla lo stato del webhook** - Visita `https://your-app-url.onrender.com/status` per vedere:
+   - Se il bot è inizializzato
+   - L'URL del webhook configurato
+   - Eventuali errori di Telegram
+   - Numero di aggiornamenti in coda
+
+3. **Verifica i log** - Controlla i log dell'applicazione su Render:
+   - Cerca messaggi come "✓ Webhook configured"
+   - Controlla se ci sono errori durante l'inizializzazione
+   - Verifica che gli aggiornamenti vengano ricevuti ("Received update")
+
+4. **Requisiti Telegram:**
+   - L'URL deve essere HTTPS (Render lo fornisce automaticamente)
+   - Il server deve essere raggiungibile pubblicamente
+   - Il token del bot deve essere valido
+
+5. **Test manuale del webhook:**
+   ```bash
+   # Controlla info webhook via Telegram API
+   curl https://api.telegram.org/bot<YOUR_BOT_TOKEN>/getWebhookInfo
+   ```
+
 ### Webhook non riceve aggiornamenti
 
-1. Verifica che `WEBHOOK_URL` sia impostato correttamente
+1. Verifica che `WEBHOOK_URL` sia impostato correttamente (vedi sopra)
 2. Assicurati che l'URL sia HTTPS (richiesto da Telegram)
 3. Controlla che il server sia raggiungibile pubblicamente
+4. Usa l'endpoint `/status` per diagnosticare problemi
 
 ### Errori con asyncio
 

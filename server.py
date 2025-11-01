@@ -8,6 +8,14 @@ from io import BytesIO
 from telegram import Update
 from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes
 import asyncio
+import logging
+
+# Configure logging
+logging.basicConfig(
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    level=logging.INFO
+)
+logger = logging.getLogger(__name__)
 
 # --- CONFIGURAZIONE ---
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
@@ -98,36 +106,64 @@ def _ensure_bot_initialized():
     global _bot_initialized
     if not _bot_initialized:
         async def init():
-            await app_bot.initialize()
-            webhook_url = os.getenv("WEBHOOK_URL")
-            if webhook_url:
-                await app_bot.bot.set_webhook(url=webhook_url)
-                print(f"✓ Webhook configured: {webhook_url}")
-            else:
-                print("⚠ WEBHOOK_URL not set - bot will not receive updates")
+            try:
+                await app_bot.initialize()
+                webhook_url = os.getenv("WEBHOOK_URL")
+                if webhook_url:
+                    await app_bot.bot.set_webhook(url=webhook_url)
+                    logger.info(f"✓ Webhook configured: {webhook_url}")
+                else:
+                    logger.warning("⚠ WEBHOOK_URL not set - bot will not receive updates")
+            except Exception as e:
+                logger.error(f"Error initializing bot: {e}", exc_info=True)
+                raise
         
         asyncio.run(init())
         _bot_initialized = True
+        logger.info("Bot initialized successfully")
 
 # --- FLASK WEBHOOK ---
 @app.route('/')
 def home():
     return "Bot finanziario attivo su Render!"
 
+@app.route('/status')
+def status():
+    """Check bot and webhook status"""
+    try:
+        _ensure_bot_initialized()
+        webhook_info = asyncio.run(app_bot.bot.get_webhook_info())
+        return {
+            "status": "ok",
+            "bot_initialized": _bot_initialized,
+            "webhook_url": webhook_info.url,
+            "pending_updates": webhook_info.pending_update_count,
+            "last_error_date": str(webhook_info.last_error_date) if webhook_info.last_error_date else None,
+            "last_error_message": webhook_info.last_error_message
+        }, 200
+    except Exception as e:
+        logger.error(f"Error getting status: {e}", exc_info=True)
+        return {"status": "error", "message": str(e)}, 500
+
 @app.route('/webhook', methods=['POST'])
 def webhook():
     """Handle incoming webhook updates from Telegram"""
-    # Ensure bot is initialized on first request
-    _ensure_bot_initialized()
-    
-    async def process():
-        json_data = request.get_json(force=True)
-        update = Update.de_json(json_data, app_bot.bot)
-        await app_bot.process_update(update)
+    try:
+        # Ensure bot is initialized on first request
+        _ensure_bot_initialized()
+        
+        async def process():
+            json_data = request.get_json(force=True)
+            logger.info(f"Received update: {json_data}")
+            update = Update.de_json(json_data, app_bot.bot)
+            await app_bot.process_update(update)
 
-    # Process the update
-    asyncio.run(process())
-    return "ok", 200
+        # Process the update
+        asyncio.run(process())
+        return "ok", 200
+    except Exception as e:
+        logger.error(f"Error processing webhook: {e}", exc_info=True)
+        return "error", 500
 
 if __name__ == '__main__':
     port = int(os.getenv("PORT", 5000))
