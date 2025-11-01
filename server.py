@@ -1,6 +1,8 @@
 from flask import Flask, request
 import os
 import yfinance as yf
+import matplotlib
+matplotlib.use('Agg')  # Use non-GUI backend for server deployment
 import matplotlib.pyplot as plt
 from io import BytesIO
 from telegram import Update
@@ -128,3 +130,5 @@ def webhook():
     return "ok", 200
 
 if __name__ == '__main__':
+    port = int(os.getenv("PORT", 5000))
+    app.run(host='0.0.0.0', port=port)
