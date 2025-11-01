@@ -23,6 +23,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
     await update.message.reply_text(msg)
 
+
 async def prezzo(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not context.args:
         await update.message.reply_text("Scrivi: /prezzo <simbolo>")
@@ -39,6 +40,7 @@ async def prezzo(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except Exception as e:
         await update.message.reply_text(f"Errore nel recupero dei dati: {e}")
 
+
 async def grafico(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not context.args:
         await update.message.reply_text("Scrivi: /grafico <simbolo>")
@@ -49,10 +51,12 @@ async def grafico(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if dati.empty:
             await update.message.reply_text("Dati non trovati per questo simbolo.")
             return
+
         plt.figure()
         dati["Close"].plot(title=f"Andamento di {simbolo}")
         plt.xlabel("Data")
         plt.ylabel("Prezzo ($)")
+
         buf = BytesIO()
         plt.savefig(buf, format="png")
         buf.seek(0)
@@ -60,6 +64,7 @@ async def grafico(update: Update, context: ContextTypes.DEFAULT_TYPE):
         plt.close()
     except Exception as e:
         await update.message.reply_text(f"Errore nel generare il grafico: {e}")
+
 
 async def info(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not context.args:
@@ -78,16 +83,20 @@ async def info(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except Exception as e:
         await update.message.reply_text(f"Errore nel recupero delle info: {e}")
 
+
 # --- FLASK WEBHOOK ---
 @app.route('/')
 def home():
-    return "Bot finanziario attivo su Render!"
+    return "✅ Bot finanziario attivo su Render!"
+
 
 @app.route('/webhook', methods=['POST'])
 def webhook():
-    update = Update.de_json(request.get_json(force=True))
-    asyncio.run(app_bot.process_update(update))
+    update = Update.de_json(request.get_json(force=True), app_bot.bot)
+    loop = asyncio.get_event_loop()
+    loop.create_task(app_bot.process_update(update))
     return "ok", 200
+
 
 # --- AVVIO DEL BOT ---
 app_bot = ApplicationBuilder().token(TELEGRAM_TOKEN).build()
@@ -95,6 +104,8 @@ app_bot.add_handler(CommandHandler("start", start))
 app_bot.add_handler(CommandHandler("prezzo", prezzo))
 app_bot.add_handler(CommandHandler("grafico", grafico))
 app_bot.add_handler(CommandHandler("info", info))
+
+_bot_initialized = False
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=int(os.environ.get('PORT', 5000)))
