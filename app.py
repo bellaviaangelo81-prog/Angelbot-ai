@@ -1,213 +1,140 @@
-from flask import Flask, request
-import requests
 import os
+import logging
+from flask import Flask
+from telegram import (
+    Update,
+    InlineKeyboardMarkup,
+    InlineKeyboardButton
+)
+from telegram.ext import (
+    ApplicationBuilder,
+    CommandHandler,
+    CallbackQueryHandler,
+    ContextTypes
+)
 import yfinance as yf
-import matplotlib.pyplot as plt
-from io import BytesIO
-import threading
-import time
-
-app = Flask(__name__)
 
 # --- CONFIGURAZIONE ---
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
-TELEGRAM_URL = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}"
-USER_SETTINGS = {}
 
-# --- TITOLI PER REGIONE ---
+# --- FLASK APP PER RENDER ---
+app = Flask(__name__)
+
+@app.route('/')
+def home():
+    return "Bot AI Finanziario attivo ✅"
+
+# --- BOT TELEGRAM ---
+logging.basicConfig(level=logging.INFO)
+
+# Dizionario titoli per regione
 STOCKS = {
     "🇺🇸 Stati Uniti": {
-        "AAPL": "Apple",
-        "AMZN": "Amazon",
-        "MSFT": "Microsoft",
-        "GOOGL": "Alphabet",
-        "TSLA": "Tesla",
-        "NVDA": "NVIDIA",
-        "META": "Meta Platforms"
+        "AAPL / Apple": "AAPL",
+        "MSFT / Microsoft": "MSFT",
+        "AMZN / Amazon": "AMZN",
+        "GOOG / Alphabet": "GOOG",
+        "TSLA / Tesla": "TSLA",
+        "META / Meta Platforms": "META"
     },
     "🇪🇺 Europa": {
-        "ISP.MI": "Intesa Sanpaolo",
-        "BMPS.MI": "Monte dei Paschi di Siena",
-        "ENI.MI": "ENI",
-        "LUX.MI": "Luxottica",
-        "RACE.MI": "Ferrari",
-        "UNI.MI": "Unicredit"
+        "ISP / Intesa Sanpaolo": "ISP.MI",
+        "BMPS / Monte dei Paschi di Siena": "BMPS.MI",
+        "ENI / Eni": "ENI.MI",
+        "LUX / Luxottica": "LUX.MI",
+        "RACE / Ferrari": "RACE.MI"
     },
     "🇨🇳 Asia": {
-        "BIDU": "Baidu",
-        "BABA": "Alibaba",
-        "TCEHY": "Tencent",
-        "SONY": "Sony",
-        "TM": "Toyota",
-        "NTDOY": "Nintendo"
+        "BIDU / Baidu": "BIDU",
+        "BABA / Alibaba": "BABA",
+        "TSM / Taiwan Semiconductor": "TSM",
+        "SONY / Sony": "SONY",
+        "NTDOY / Nintendo": "NTDOY"
     }
 }
 
-# --- FREQUENZE MONITORAGGIO ---
 FREQUENZE = {
-    "30 Minuti": 1800,
-    "1 Ora": 3600,
-    "2 Ore": 7200,
-    "5 Ore": 18000,
-    "Giornaliero": 86400,
-    "Settimanale": 604800,
+    "30 minuti": 30,
+    "60 minuti": 60,
+    "120 minuti": 120,
+    "Giornaliero": 1440,
+    "Settimanale": 10080,
     "Off": 0
 }
 
-# --- INVIO MESSAGGIO TELEGRAM ---
-def send_message(chat_id, text, reply_markup=None):
-    data = {"chat_id": chat_id, "text": text, "parse_mode": "HTML"}
-    if reply_markup:
-        data["reply_markup"] = reply_markup
-    requests.post(f"{TELEGRAM_URL}/sendMessage", json=data)
+# --- FUNZIONE DATI FINANZIARI ---
+def get_stock_data(symbol):
+    try:
+        stock = yf.Ticker(symbol)
+        info = stock.info
+        price = info.get("regularMarketPrice")
+        prev = info.get("regularMarketPreviousClose")
+        if not price or not prev:
+            return None
+        change = ((price - prev) / prev) * 100
+        trend = "📈" if change > 0 else "📉"
+        suggestion = "Consigliato l’acquisto ✅" if change > 0 else "Meglio attendere ⏳"
+        return f"💼 {symbol}\n💰 Prezzo attuale: {price}$\n📊 Variazione: {change:.2f}% {trend}\n💡 {suggestion}"
+    except Exception as e:
+        logging.error(f"Errore dati per {symbol}: {e}")
+        return None
 
-# --- INVIO GRAFICO ---
-def send_chart(chat_id, symbol):
-    data = yf.download(symbol, period="5d", interval="1h")
-    if data.empty:
-        send_message(chat_id, "❌ Nessun dato disponibile per questo titolo.")
-        return
+# --- HANDLER ---
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    keyboard = [
+        [InlineKeyboardButton("📊 Controlla titoli", callback_data="controlla_titoli")],
+        [InlineKeyboardButton("🕓 Imposta monitoraggio", callback_data="imposta_monitoraggio")]
+    ]
+    await update.message.reply_text(
+        "Benvenuto nel tuo assistente finanziario AI! 💹",
+        reply_markup=InlineKeyboardMarkup(keyboard)
+    )
 
-    plt.figure()
-    plt.plot(data.index, data["Close"])
-    plt.title(symbol)
-    plt.xlabel("Tempo")
-    plt.ylabel("Prezzo")
-    plt.grid(True)
+async def menu_principale(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
 
-    bio = BytesIO()
-    plt.savefig(bio, format="png")
-    bio.seek(0)
-    files = {"photo": bio}
-    requests.post(f"{TELEGRAM_URL}/sendPhoto", data={"chat_id": chat_id}, files=files)
+    if query.data == "controlla_titoli":
+        region_buttons = [[InlineKeyboardButton(region, callback_data=f"regione_{region}")] for region in STOCKS.keys()]
+        await query.message.reply_text("Seleziona una regione:", reply_markup=InlineKeyboardMarkup(region_buttons))
 
-# --- MONITORAGGIO AUTOMATICO ---
-def monitor_stocks(chat_id):
-    while True:
-        settings = USER_SETTINGS.get(chat_id, {})
-        freq = settings.get("frequenza", 0)
-        titoli = settings.get("titoli", [])
+    elif query.data == "imposta_monitoraggio":
+        freq_buttons = [[InlineKeyboardButton(name, callback_data=f"freq_{value}")] for name, value in FREQUENZE.items()]
+        await query.message.reply_text("Imposta la frequenza di monitoraggio:", reply_markup=InlineKeyboardMarkup(freq_buttons))
 
-        if not titoli or freq == 0:
-            time.sleep(10)
-            continue
+async def seleziona_titolo(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    regione = query.data.replace("regione_", "")
+    stocks = STOCKS.get(regione, {})
+    titolo_buttons = [[InlineKeyboardButton(nome, callback_data=f"titolo_{simbolo}")] for nome, simbolo in stocks.items()]
+    await query.message.reply_text("Scegli un titolo da analizzare:", reply_markup=InlineKeyboardMarkup(titolo_buttons))
 
-        for symbol in titoli:
-            data = yf.Ticker(symbol)
-            hist = data.history(period="5d")
-            if hist.empty:
-                continue
-
-            price_now = hist["Close"].iloc[-1]
-            price_old = hist["Close"].iloc[0]
-            change = ((price_now - price_old) / price_old) * 100
-
-            nome = next((n for region in STOCKS.values() for s, n in region.items() if s == symbol), symbol)
-
-            if change > 2:
-                msg = f"📈 {nome} ({symbol}) è in rialzo del {change:.2f}%. Potresti considerare un investimento."
-            elif change < -2:
-                msg = f"📉 {nome} ({symbol}) è in ribasso del {change:.2f}%. Forse conviene attendere."
-            else:
-                msg = f"📊 {nome} ({symbol}) è stabile. Nessun grande movimento per ora."
-
-            send_message(chat_id, msg)
-
-        time.sleep(freq)
-
-def start_monitoring(chat_id):
-    t = threading.Thread(target=monitor_stocks, args=(chat_id,), daemon=True)
-    t.start()
-
-# --- BARRA DI RICERCA ---
-def trova_titolo(query):
-    query = query.lower().strip()
-    for regione, titoli in STOCKS.items():
-        for simbolo, nome in titoli.items():
-            if query in simbolo.lower() or query in nome.lower():
-                return simbolo, nome
-    return None, None
-
-# --- WEBHOOK PRINCIPALE ---
-@app.route("/webhook", methods=["POST"])
-def webhook():
-    data = request.get_json()
-    if "message" not in data:
-        return "OK", 200
-
-    chat_id = data["message"]["chat"]["id"]
-    text = data["message"].get("text", "").strip()
-
-    if text == "/start":
-        keyboard = {
-            "keyboard": [
-                [{"text": "📊 Controlla titoli"}],
-                [{"text": "🔍 Cerca titolo"}],
-                [{"text": "⚙️ Imposta monitoraggio"}],
-                [{"text": "💡 Consigli automatici"}]
-            ],
-            "resize_keyboard": True
-        }
-        send_message(chat_id, "Benvenuto nel tuo assistente finanziario AI! 💹", reply_markup=keyboard)
-        USER_SETTINGS[chat_id] = {"titoli": [], "frequenza": 0}
-        start_monitoring(chat_id)
-
-    elif text == "📊 Controlla titoli":
-        region_keyboard = {"keyboard": [[{"text": key}] for key in STOCKS.keys()], "resize_keyboard": True}
-        send_message(chat_id, "Seleziona una regione:", reply_markup=region_keyboard)
-
-    elif text in STOCKS.keys():
-        region = text
-        titles_keyboard = {"keyboard": [[{"text": f"{s} / {n}"}] for s, n in STOCKS[region].items()],
-                           "resize_keyboard": True}
-        send_message(chat_id, "Scegli un titolo da analizzare:", reply_markup=titles_keyboard)
-
-    elif "/" in text:
-        symbol = text.split("/")[0].strip()
-        send_chart(chat_id, symbol)
-        send_message(chat_id, f"Analisi completata per {symbol} ✅")
-
-    elif text == "🔍 Cerca titolo":
-        send_message(chat_id, "Scrivi il nome o simbolo del titolo che vuoi cercare (es. Apple o AAPL).")
-
-    elif text.upper() in [s for region in STOCKS.values() for s in region.keys()] or any(
-        text.lower() in n.lower() for region in STOCKS.values() for n in region.values()):
-        symbol, nome = trova_titolo(text)
-        if symbol:
-            send_chart(chat_id, symbol)
-            send_message(chat_id, f"Grafico e analisi per {nome} ({symbol}) completati.")
-        else:
-            send_message(chat_id, "❌ Nessun titolo trovato. Riprova.")
-
-    elif text == "⚙️ Imposta monitoraggio":
-        freq_keyboard = {"keyboard": [[{"text": f}] for f in FREQUENZE.keys()], "resize_keyboard": True}
-        send_message(chat_id, "Scegli la frequenza di monitoraggio:", reply_markup=freq_keyboard)
-
-    elif text in FREQUENZE:
-        USER_SETTINGS[chat_id]["frequenza"] = FREQUENZE[text]
-        send_message(chat_id, f"✅ Frequenza impostata su: {text}")
-
-    elif text == "💡 Consigli automatici":
-        all_symbols = [s for region in STOCKS.values() for s in region.keys()]
-        choice = all_symbols[int(time.time()) % len(all_symbols)]
-        nome = next((n for region in STOCKS.values() for s, n in region.items() if s == choice), choice)
-        hist = yf.Ticker(choice).history(period="5d")
-        if not hist.empty:
-            change = ((hist["Close"].iloc[-1] - hist["Close"].iloc[0]) / hist["Close"].iloc[0]) * 100
-            trend = "in rialzo" if change > 0 else "in ribasso"
-            send_message(chat_id, f"📈 {nome} ({choice}) è {trend} del {abs(change):.2f}%. Potrebbe essere interessante da osservare.")
-        else:
-            send_message(chat_id, "Non riesco a ottenere i dati al momento.")
-
+async def analizza_titolo(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    symbol = query.data.replace("titolo_", "")
+    data = get_stock_data(symbol)
+    if data:
+        await query.message.reply_text(data)
     else:
-        symbol, nome = trova_titolo(text)
-        if symbol:
-            send_chart(chat_id, symbol)
-            send_message(chat_id, f"Analisi trovata per {nome} ({symbol}) ✅")
-        else:
-            send_message(chat_id, "❌ Non ho capito. Puoi usare i comandi del menu principale.")
+        await query.message.reply_text("❌ Nessun dato disponibile per questo titolo.")
 
-    return "OK", 200
+async def imposta_frequenza(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    freq_value = query.data.replace("freq_", "")
+    await query.message.reply_text(f"🔔 Frequenza di monitoraggio impostata su {freq_value} minuti.")
 
+# --- AVVIO BOT ---
 if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=5000)
+    application = ApplicationBuilder().token(TELEGRAM_TOKEN).build()
+
+    application.add_handler(CommandHandler("start", start))
+    application.add_handler(CallbackQueryHandler(menu_principale, pattern="^controlla_titoli|imposta_monitoraggio$"))
+    application.add_handler(CallbackQueryHandler(seleziona_titolo, pattern="^regione_"))
+    application.add_handler(CallbackQueryHandler(analizza_titolo, pattern="^titolo_"))
+    application.add_handler(CallbackQueryHandler(imposta_frequenza, pattern="^freq_"))
+
+    # Avvio bot
+    application.run_polling()
