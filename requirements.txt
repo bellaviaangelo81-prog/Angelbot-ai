@@ -3,6 +3,6 @@ requests==2.31.0
 python-telegram-bot==20.6
 gunicorn==21.2.0
 openai>=1.0.0
-yfinance
-matplotlib
+yfinance==0.2.44
+matplotlib==3.9.0
 schedule
