@@ -101,6 +101,9 @@ Il bot utilizza un pattern corretto per gestire webhook in modo asincrono:
 ```python
 @app.route('/webhook', methods=['POST'])
 def webhook():
+    # Lazy initialization on first request
+    _ensure_bot_initialized()
+    
     async def process():
         json_data = request.get_json(force=True)
         update = Update.de_json(json_data, app_bot.bot)
@@ -112,14 +115,22 @@ def webhook():
 
 ### Inizializzazione Applicazione
 
-L'applicazione viene inizializzata correttamente all'avvio:
+L'applicazione utilizza un'inizializzazione lazy (al primo webhook) per compatibilità con server WSGI come gunicorn:
 
 ```python
-async def _init_bot():
-    await app_bot.initialize()
-    await app_bot.bot.set_webhook(url=os.getenv("WEBHOOK_URL", ""))
+_bot_initialized = False
 
-asyncio.run(_init_bot())
+def _ensure_bot_initialized():
+    global _bot_initialized
+    if not _bot_initialized:
+        async def init():
+            await app_bot.initialize()
+            webhook_url = os.getenv("WEBHOOK_URL")
+            if webhook_url:
+                await app_bot.bot.set_webhook(url=webhook_url)
+        
+        asyncio.run(init())
+        _bot_initialized = True
 ```
 
 ## 📦 Dipendenze

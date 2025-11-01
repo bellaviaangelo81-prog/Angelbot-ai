@@ -88,24 +88,24 @@ app_bot.add_handler(CommandHandler("prezzo", prezzo))
 app_bot.add_handler(CommandHandler("grafico", grafico))
 app_bot.add_handler(CommandHandler("info", info))
 
-# Shared event loop for async operations
-_loop = asyncio.new_event_loop()
-asyncio.set_event_loop(_loop)
+# Bot initialization state
+_bot_initialized = False
 
-# Initialize bot application (required in v20+)
-async def _init_bot():
-    """Initialize the bot application for webhook mode"""
-    await app_bot.initialize()
-    webhook_url = os.getenv("WEBHOOK_URL")
-    if webhook_url:
-        await app_bot.bot.set_webhook(url=webhook_url)
-        print(f"✓ Webhook configured: {webhook_url}")
-    else:
-        print("⚠ WEBHOOK_URL not set - bot will not receive updates")
-
-# Run bot initialization at startup (only if not already running)
-if not app_bot.running:
-    _loop.run_until_complete(_init_bot())
+def _ensure_bot_initialized():
+    """Lazy initialization of the bot application (called on first webhook request)"""
+    global _bot_initialized
+    if not _bot_initialized:
+        async def init():
+            await app_bot.initialize()
+            webhook_url = os.getenv("WEBHOOK_URL")
+            if webhook_url:
+                await app_bot.bot.set_webhook(url=webhook_url)
+                print(f"✓ Webhook configured: {webhook_url}")
+            else:
+                print("⚠ WEBHOOK_URL not set - bot will not receive updates")
+        
+        asyncio.run(init())
+        _bot_initialized = True
 
 # --- FLASK WEBHOOK ---
 @app.route('/')
@@ -115,13 +115,16 @@ def home():
 @app.route('/webhook', methods=['POST'])
 def webhook():
     """Handle incoming webhook updates from Telegram"""
+    # Ensure bot is initialized on first request
+    _ensure_bot_initialized()
+    
     async def process():
         json_data = request.get_json(force=True)
         update = Update.de_json(json_data, app_bot.bot)
         await app_bot.process_update(update)
     
-    # Use the shared event loop
-    _loop.run_until_complete(process())
+    # Process the update
+    asyncio.run(process())
     return "ok", 200
 
 if __name__ == '__main__':
