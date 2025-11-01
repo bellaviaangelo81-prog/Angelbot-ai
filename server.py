@@ -100,32 +100,52 @@ app_bot.add_handler(CommandHandler("info", info))
 
 # Bot initialization state
 _bot_initialized = False
+_init_lock = False
 
 def _ensure_bot_initialized():
     """Lazy initialization of the bot application (called on first webhook request)"""
-    global _bot_initialized
+    global _bot_initialized, _init_lock
+    
+    # Simple lock to prevent concurrent initialization
+    if _init_lock:
+        import time
+        for _ in range(50):  # Wait up to 5 seconds
+            if _bot_initialized:
+                return
+            time.sleep(0.1)
+        return
+    
     if not _bot_initialized:
-        async def init():
-            try:
-                await app_bot.initialize()
-                webhook_url = os.getenv("WEBHOOK_URL")
-                if webhook_url:
-                    await app_bot.bot.set_webhook(url=webhook_url)
-                    logger.info(f"✓ Webhook configured: {webhook_url}")
-                else:
-                    logger.warning("⚠ WEBHOOK_URL not set - bot will not receive updates")
-            except Exception as e:
-                logger.error(f"Error initializing bot: {e}", exc_info=True)
-                raise
-        
-        asyncio.run(init())
-        _bot_initialized = True
-        logger.info("Bot initialized successfully")
+        _init_lock = True
+        try:
+            async def init():
+                try:
+                    await app_bot.initialize()
+                    webhook_url = os.getenv("WEBHOOK_URL")
+                    if webhook_url:
+                        await app_bot.bot.set_webhook(url=webhook_url)
+                        logger.info(f"✓ Webhook configured: {webhook_url}")
+                    else:
+                        logger.warning("⚠ WEBHOOK_URL not set - bot will not receive updates")
+                except Exception as e:
+                    logger.error(f"Error initializing bot: {e}", exc_info=True)
+                    raise
+            
+            asyncio.run(init())
+            _bot_initialized = True
+            logger.info("✓ Bot initialized successfully")
+        finally:
+            _init_lock = False
 
 # --- FLASK WEBHOOK ---
 @app.route('/')
 def home():
     return "Bot finanziario attivo su Render!"
+
+@app.route('/health')
+def health():
+    """Simple health check endpoint"""
+    return {"status": "healthy", "service": "telegram-bot"}, 200
 
 @app.route('/status')
 def status():
@@ -152,14 +172,26 @@ def webhook():
         # Ensure bot is initialized on first request
         _ensure_bot_initialized()
         
+        # Get the JSON data
+        json_data = request.get_json(force=True)
+        logger.info(f"Received update from Telegram")
+        
         async def process():
-            json_data = request.get_json(force=True)
-            logger.info(f"Received update: {json_data}")
             update = Update.de_json(json_data, app_bot.bot)
             await app_bot.process_update(update)
 
-        # Process the update
-        asyncio.run(process())
+        # Process the update - handle event loop carefully
+        try:
+            loop = asyncio.get_event_loop()
+            if loop.is_running():
+                # If loop is running, create a new one
+                loop = asyncio.new_event_loop()
+                asyncio.set_event_loop(loop)
+            loop.run_until_complete(process())
+        except RuntimeError:
+            # Fallback to asyncio.run if there are issues
+            asyncio.run(process())
+        
         return "ok", 200
     except Exception as e:
         logger.error(f"Error processing webhook: {e}", exc_info=True)
