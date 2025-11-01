@@ -1,6 +1,8 @@
 from flask import Flask, request
 import os
 import yfinance as yf
+import matplotlib
+matplotlib.use('Agg')  # Use non-GUI backend for server deployment
 import matplotlib.pyplot as plt
 from io import BytesIO
 from telegram import Update
@@ -103,7 +105,7 @@ def _ensure_bot_initialized():
                 print(f"✓ Webhook configured: {webhook_url}")
             else:
                 print("⚠ WEBHOOK_URL not set - bot will not receive updates")
-        
+
         asyncio.run(init())
         _bot_initialized = True
 
@@ -117,7 +119,7 @@ def webhook():
     """Handle incoming webhook updates from Telegram"""
     # Ensure bot is initialized on first request
     _ensure_bot_initialized()
-    
+
     async def process():
         json_data = request.get_json(force=True)
         update = Update.de_json(json_data, app_bot.bot)
@@ -128,3 +130,5 @@ def webhook():
     return "ok", 200
 
 if __name__ == '__main__':
+    port = int(os.getenv("PORT", 5000))
+    app.run(host='0.0.0.0', port=port)
