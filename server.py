@@ -78,6 +78,25 @@ async def info(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except Exception as e:
         await update.message.reply_text(f"Errore nel recupero delle info: {e}")
 
+# --- AVVIO DEL BOT ---
+# Initialize the Application with proper configuration
+app_bot = ApplicationBuilder().token(TELEGRAM_TOKEN).build()
+
+# Add command handlers
+app_bot.add_handler(CommandHandler("start", start))
+app_bot.add_handler(CommandHandler("prezzo", prezzo))
+app_bot.add_handler(CommandHandler("grafico", grafico))
+app_bot.add_handler(CommandHandler("info", info))
+
+# Initialize bot application (required in v20+)
+async def _init_bot():
+    """Initialize the bot application for webhook mode"""
+    await app_bot.initialize()
+    await app_bot.bot.set_webhook(url=os.getenv("WEBHOOK_URL", ""))
+
+# Run bot initialization at startup
+asyncio.run(_init_bot())
+
 # --- FLASK WEBHOOK ---
 @app.route('/')
 def home():
@@ -85,16 +104,14 @@ def home():
 
 @app.route('/webhook', methods=['POST'])
 def webhook():
-    update = Update.de_json(request.get_json(force=True))
-    asyncio.run(app_bot.process_update(update))
+    """Handle incoming webhook updates from Telegram"""
+    async def process():
+        json_data = request.get_json(force=True)
+        update = Update.de_json(json_data, app_bot.bot)
+        await app_bot.process_update(update)
+    
+    asyncio.run(process())
     return "ok", 200
-
-# --- AVVIO DEL BOT ---
-app_bot = ApplicationBuilder().token(TELEGRAM_TOKEN).build()
-app_bot.add_handler(CommandHandler("start", start))
-app_bot.add_handler(CommandHandler("prezzo", prezzo))
-app_bot.add_handler(CommandHandler("grafico", grafico))
-app_bot.add_handler(CommandHandler("info", info))
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=int(os.environ.get('PORT', 5000)))
