@@ -88,14 +88,24 @@ app_bot.add_handler(CommandHandler("prezzo", prezzo))
 app_bot.add_handler(CommandHandler("grafico", grafico))
 app_bot.add_handler(CommandHandler("info", info))
 
+# Shared event loop for async operations
+_loop = asyncio.new_event_loop()
+asyncio.set_event_loop(_loop)
+
 # Initialize bot application (required in v20+)
 async def _init_bot():
     """Initialize the bot application for webhook mode"""
     await app_bot.initialize()
-    await app_bot.bot.set_webhook(url=os.getenv("WEBHOOK_URL", ""))
+    webhook_url = os.getenv("WEBHOOK_URL")
+    if webhook_url:
+        await app_bot.bot.set_webhook(url=webhook_url)
+        print(f"✓ Webhook configured: {webhook_url}")
+    else:
+        print("⚠ WEBHOOK_URL not set - bot will not receive updates")
 
-# Run bot initialization at startup
-asyncio.run(_init_bot())
+# Run bot initialization at startup (only if not already running)
+if not app_bot.running:
+    _loop.run_until_complete(_init_bot())
 
 # --- FLASK WEBHOOK ---
 @app.route('/')
@@ -110,7 +120,8 @@ def webhook():
         update = Update.de_json(json_data, app_bot.bot)
         await app_bot.process_update(update)
     
-    asyncio.run(process())
+    # Use the shared event loop
+    _loop.run_until_complete(process())
     return "ok", 200
 
 if __name__ == '__main__':
