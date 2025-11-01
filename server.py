@@ -1,63 +1,62 @@
 import os
-import re
-import logging
-from typing import Optional
-
-import requests
-from requests.adapters import HTTPAdapter, Retry
-from flask import Flask, request, jsonify, abort
-from openai import OpenAI
-
-# Config logging
-logging.basicConfig(level=os.getenv("LOG_LEVEL", "INFO"))
-logger = logging.getLogger(__name__)
+from flask import Flask, request
+from telegram import Update
+from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
 
 app = Flask(__name__)
 
-# === CONFIGURATION ===
+# Variabili d’ambiente (Render → Environment)
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
-OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
-# Optional: secret token to verify Telegram webhook source (set in setWebhook secret_token)
-TELEGRAM_SECRET_TOKEN = os.getenv("TELEGRAM_SECRET_TOKEN")
+OWNER_TELEGRAM_ID = os.getenv("OWNER_TELEGRAM_ID")
 
-# Validate required env vars early (avoid leaking tokens in logs)
-missing = []
-if not TELEGRAM_TOKEN:
-    missing.append("TELEGRAM_TOKEN")
-if not OPENAI_API_KEY:
-    missing.append("OPENAI_API_KEY")
-if missing:
-    logger.error("Missing required environment variables: %s", ", ".join(missing))
-    # Exit early to fail fast in the runtime environment
-    raise SystemExit(1)
+# Crea l'app Telegram
+application = Application.builder().token(TELEGRAM_TOKEN).build()
 
-# Initialize OpenAI client
-client = OpenAI(api_key=OPENAI_API_KEY)
 
-TELEGRAM_URL = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
+# --- Comandi base ---
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if str(update.effective_user.id) != OWNER_TELEGRAM_ID:
+        await update.message.reply_text("❌ Accesso non autorizzato.")
+        return
+    await update.message.reply_text("🤖 Ciao Angelo, sono il tuo bot AI! Connessione attiva ✅")
 
-# Requests session with retries and timeouts
-session = requests.Session()
-retries = Retry(total=3, backoff_factor=1, status_forcelist=[429, 500, 502, 503, 504])
-adapter = HTTPAdapter(max_retries=retries)
-session.mount("https://", adapter)
-session.headers.update({"Content-Type": "application/json"})
 
-# Telegram limits
-TELEGRAM_MAX_MESSAGE = 4096
+async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text("Puoi scrivermi qualsiasi cosa, e io risponderò!")
 
-# Characters to escape for MarkdownV2 according to Telegram docs
-_MD_V2_CHARS_RE = re.compile(r"([_\*\[\]\(\)~`>#+\-=|{}.!\\])")
 
-def escape_markdown_v2(text: str) -> str:
-    """Escape text for Telegram MarkdownV2."""
-    if not text:
-        return text
-    return _MD_V2_CHARS_RE.sub(r"\\\1", text)
+async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if str(update.effective_user.id) != OWNER_TELEGRAM_ID:
+        return  # Ignora chi non è il proprietario
+    text = update.message.text
+    response = f"Hai scritto: {text}"
+    await update.message.reply_text(response)
 
-def truncate_text(text: str, limit: int) -> str:
-    if len(text) <= limit:
-        return text
-    # Reserve some space for a truncation note
-    note = "\n\n[...] (troncato)"
-    return text[:limit - len(note)] + note
+
+# --- Registra i comandi ---
+application.add_handler(CommandHandler("start", start))
+application.add_handler(CommandHandler("help", help_command))
+application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
+
+
+# --- Webhook Flask ---
+@app.route(f"/{TELEGRAM_TOKEN}", methods=["POST"])
+async def webhook():
+    update = Update.de_json(request.get_json(force=True), application.bot)
+    await application.process_update(update)
+    return "OK", 200
+
+
+@app.route("/")
+def home():
+    return "Bot attivo e collegato al webhook ✅", 200
+
+
+if __name__ == "__main__":
+    port = int(os.environ.get("PORT", 5000))
+    application.run_webhook(
+        listen="0.0.0.0",
+        port=port,
+        url_path=TELEGRAM_TOKEN,
+        webhook_url=f"https://angelbot-ai.onrender.com/{TELEGRAM_TOKEN}"
+    )
