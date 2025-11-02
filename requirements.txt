@@ -6,5 +6,5 @@ matplotlib==3.9.2
 requests==2.32.3
 pandas==2.2.3
 numpy==1.26.4
-openai==1.50.0
+# Force rebuild - openai 1.52.0 required
 schedule==1.2.1
