@@ -113,8 +113,11 @@ def home():
 def start_report_thread():
     def loop():
         while True:
-            genera_report_giornaliero()
-            logger.info("Report giornaliero completato.")
+            try:
+                genera_report_giornaliero()
+                logger.info("Report giornaliero completato.")
+            except Exception as e:
+                logger.exception(f"Errore nel report giornaliero: {e}")
             import time
             time.sleep(24 * 3600)  # ogni 24 ore
     th = threading.Thread(target=loop, daemon=True)
