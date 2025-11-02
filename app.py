@@ -20,7 +20,6 @@ logger.setLevel(logging.INFO)
 
 # Config
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
-WEBHOOK_SECRET = os.getenv("WEBHOOK_SECRET", "angel_secret")
 TZ_ITALY = ZoneInfo("Europe/Rome")
 DATA_FILE = "users.json"
 
@@ -56,7 +55,7 @@ def get_user_context(chat_id: str):
     data = load_user_data()
     return data.get(str(chat_id), {}).get("context", [])
 
-@app.route(f"/webhook/{WEBHOOK_SECRET}", methods=["POST"])
+@app.route("/webhook", methods=["POST"])
 def telegram_webhook():
     update = request.json
     if not update:
