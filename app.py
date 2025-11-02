@@ -37,7 +37,6 @@ def send_message(chat_id, text):
 
 # === ANALISI CON OPENAI ===
 def analizza_dati_foglio():
-    # Legge tutto il foglio e lo trasforma in testo
     dati = sheet.get_all_records()
     testo_dati = json.dumps(dati, indent=2, ensure_ascii=False)
 
@@ -59,41 +58,46 @@ def analizza_dati_foglio():
     return risposta.choices[0].message.content.strip()
 
 # === GESTIONE MESSAGGI TELEGRAM ===
-@app.route("/webhook", methods=["POST"])
+@app.route("/webhook", methods=["GET", "POST"])
 def webhook():
-    data = request.get_json()
+    if request.method == "GET":
+        # utile per testare nel browser
+        return "Webhook attivo e funzionante!", 200
 
-    if "message" in data:
-        chat_id = data["message"]["chat"]["id"]
-        text = data["message"]["text"].lower().strip()
+    if request.method == "POST":
+        data = request.get_json(force=True)
 
-        if text == "saldo":
-            saldo = sheet.acell("B2").value
-            send_message(chat_id, f"💰 Il tuo saldo attuale è: {saldo}")
+        if "message" in data:
+            chat_id = data["message"]["chat"]["id"]
+            text = data["message"]["text"].lower().strip()
 
-        elif text == "analisi":
-            send_message(chat_id, "📊 Sto analizzando i tuoi dati, attendi un momento...")
-            try:
-                report = analizza_dati_foglio()
-                send_message(chat_id, f"📈 Analisi automatica:\n\n{report}")
-            except Exception as e:
-                send_message(chat_id, f"⚠️ Errore nell'analisi: {e}")
+            if text == "saldo":
+                saldo = sheet.acell("B2").value
+                send_message(chat_id, f"💰 Il tuo saldo attuale è: {saldo}")
 
-        elif text.startswith("scrivi"):
-            # Esempio: "scrivi C5 12345"
-            try:
-                parti = text.split()
-                cella, valore = parti[1], " ".join(parti[2:])
-                sheet.update(cella, valore)
-                send_message(chat_id, f"✅ Aggiornato {cella} con '{valore}'")
-            except:
-                send_message(chat_id, "❌ Formato non valido. Usa: scrivi <cella> <valore>")
+            elif text == "analisi":
+                send_message(chat_id, "📊 Sto analizzando i tuoi dati, attendi un momento...")
+                try:
+                    report = analizza_dati_foglio()
+                    send_message(chat_id, f"📈 Analisi automatica:\n\n{report}")
+                except Exception as e:
+                    send_message(chat_id, f"⚠️ Errore nell'analisi: {e}")
 
-        else:
-            send_message(chat_id, "💡 Comandi disponibili:\n- saldo\n- scrivi <cella> <valore>\n- analisi")
+            elif text.startswith("scrivi"):
+                try:
+                    parti = text.split()
+                    cella, valore = parti[1], " ".join(parti[2:])
+                    sheet.update(cella, valore)
+                    send_message(chat_id, f"✅ Aggiornato {cella} con '{valore}'")
+                except:
+                    send_message(chat_id, "❌ Formato non valido. Usa: scrivi <cella> <valore>")
 
-    return "ok", 200
+            else:
+                send_message(chat_id, "💡 Comandi disponibili:\n- saldo\n- scrivi <cella> <valore>\n- analisi")
+
+        return "ok", 200
 
 # === AVVIO SERVER ===
 if __name__ == "__main__":
-    app.run(port=5000)
+    port = int(os.environ.get("PORT", 10000))  # Render usa questa porta
+    app.run(host="0.0.0.0", port=port)
