@@ -30,4 +30,8 @@ jobs:
           GOOGLE_SHEETS_KEY: ${{ secrets.GOOGLE_SHEETS_KEY }}
           WEBHOOK_URL: ${{ secrets.WEBHOOK_URL }}
         run: |
-          python app.py
+        run: |
+  python app.py || true
+  - name: Mostra log di errore
+  run: |
+    cat nohup.out || true
