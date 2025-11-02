@@ -1,148 +1,125 @@
-from flask import Flask, request
-import os, json, requests, gspread
-from google.oauth2.service_account import Credentials
-from openai import OpenAI
-import yfinance as yf
+import os
+import json
+import logging
+import threading
 from datetime import datetime
-from report import genera_report_giornaliero, avvia_report_programmato
+from zoneinfo import ZoneInfo
+from flask import Flask, request
+from report import (
+    send_price_for_chat,
+    send_chart_for_chat,
+    send_analysis_for_chat,
+    send_portfolio,
+    genera_report_giornaliero,
+)
+from report import telegram_send_message, ask_openai_text
 
 app = Flask(__name__)
+logger = logging.getLogger("angelbot.app")
+logger.setLevel(logging.INFO)
 
-# === VARIABILI DI AMBIENTE ===
+# Config
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
-OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
-GOOGLE_SHEETS_KEY = os.getenv("GOOGLE_SHEETS_KEY")
-CHAT_ID_PERSONALE = os.getenv("CHAT_ID_PERSONALE")
+WEBHOOK_SECRET = os.getenv("WEBHOOK_SECRET", "angel_secret")
+TZ_ITALY = ZoneInfo("Europe/Rome")
+DATA_FILE = "users.json"
 
-# === CONFIGURAZIONE OPENAI ===
-client = OpenAI(api_key=OPENAI_API_KEY)
+# Carica la memoria mini locale
+def load_user_data():
+    if os.path.exists(DATA_FILE):
+        try:
+            with open(DATA_FILE, "r", encoding="utf-8") as f:
+                return json.load(f)
+        except Exception:
+            logger.exception("Errore caricando users.json")
+    return {}
 
-# === GOOGLE SHEETS ===
-creds_dict = json.loads(GOOGLE_SHEETS_KEY)
-creds = Credentials.from_service_account_info(
-    creds_dict, scopes=["https://www.googleapis.com/auth/spreadsheets"]
-)
-gclient = gspread.authorize(creds)
-SHEET_ID = "10L2gum_HDbDWyFsdt8mW8lrKSRSYuYJ77ohAXFbgZvc"
-sheet = gclient.open_by_key(SHEET_ID).sheet1
+def save_user_data(data):
+    try:
+        with open(DATA_FILE, "w", encoding="utf-8") as f:
+            json.dump(data, f, ensure_ascii=False, indent=2)
+    except Exception:
+        logger.exception("Errore salvando users.json")
 
-# === FUNZIONE TELEGRAM ===
-def send_message(chat_id, text):
-    url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
-    payload = {"chat_id": chat_id, "text": text, "parse_mode": "HTML"}
-    requests.post(url, json=payload)
+# Mini memoria contestuale
+def append_user_context(chat_id: str, role: str, content: str):
+    data = load_user_data()
+    u = data.get(str(chat_id), {})
+    ctx = u.get("context", [])
+    ctx.append({"role": role, "content": content})
+    # mantiene solo ultimi 5 messaggi
+    u["context"] = ctx[-5:]
+    data[str(chat_id)] = u
+    save_user_data(data)
 
-# === TRADUZIONE SIMBOLI / NOMI ===
-mappa_titoli = {
-    "apple": "AAPL",
-    "aapl": "AAPL",
-    "amazon": "AMZN",
-    "amzn": "AMZN",
-    "tesla": "TSLA",
-    "tsla": "TSLA",
-    "microsoft": "MSFT",
-    "msft": "MSFT",
-    "google": "GOOGL",
-    "alphabet": "GOOGL",
-    "nvda": "NVDA",
-    "nvidia": "NVDA",
-}
+def get_user_context(chat_id: str):
+    data = load_user_data()
+    return data.get(str(chat_id), {}).get("context", [])
 
-def trova_simbolo(nome):
-    return mappa_titoli.get(nome.lower().replace("-", ""), None)
+@app.route(f"/webhook/{WEBHOOK_SECRET}", methods=["POST"])
+def telegram_webhook():
+    update = request.json
+    if not update:
+        return "no update", 200
 
-# === GESTIONE MESSAGGI TELEGRAM ===
-@app.route("/webhook", methods=["POST"])
-def webhook():
-    data = request.get_json()
+    message = update.get("message", {})
+    chat_id = str(message.get("chat", {}).get("id"))
+    text = message.get("text", "").strip()
 
-    if "message" not in data:
+    if not chat_id or not text:
         return "no message", 200
 
-    chat_id = data["message"]["chat"]["id"]
-    text = data["message"].get("text", "").lower().strip()
-
-    if text == "/start":
-        send_message(chat_id, "👋 Benvenuto in <b>AngelBot AI</b>!\n\nComandi disponibili:\n"
-                              "• <b>saldo</b> – Mostra il saldo dal foglio Google\n"
-                              "• <b>scrivi C5 1234</b> – Aggiorna una cella\n"
-                              "• <b>analisi</b> – Analizza i dati del foglio\n"
-                              "• <b>grafico</b> o <b>prezzo</b> + nome titolo\n"
-                              "• <b>portafoglio</b> – Mostra le tue azioni salvate\n"
-                              "• <b>report</b> – Report globale giornaliero\n\n"
-                              "Puoi scrivere sia ‘AAPL’ che ‘Apple’, ottieni lo stesso risultato.")
-
-    elif text == "saldo":
-        saldo = sheet.acell("B2").value
-        send_message(chat_id, f"💰 Il tuo saldo attuale è: {saldo}")
-
-    elif text.startswith("scrivi"):
-        try:
-            parti = text.split()
-            cella, valore = parti[1], " ".join(parti[2:])
-            sheet.update(cella, valore)
-            send_message(chat_id, f"✅ Aggiornato {cella} con '{valore}'")
-        except:
-            send_message(chat_id, "❌ Formato non valido. Usa: scrivi <cella> <valore>")
-
-    elif text.startswith("prezzo") or text.startswith("grafico"):
-        parti = text.split()
-        if len(parti) < 2:
-            send_message(chat_id, "❌ Scrivi: prezzo <titolo> o grafico <titolo>")
+    # Comandi principali
+    if text.startswith("/start"):
+        telegram_send_message(chat_id, "👋 Ciao! Sono AngelBot, il tuo assistente AI finanziario e personale.")
+    elif text.startswith("/price"):
+        parts = text.split()
+        if len(parts) >= 2:
+            send_price_for_chat(chat_id, parts[1].upper())
         else:
-            nome = parti[1]
-            symbol = trova_simbolo(nome) or nome.upper()
-            try:
-                ticker = yf.Ticker(symbol)
-                info = ticker.info
-                prezzo = info.get("regularMarketPrice", "N/D")
-                variazione = info.get("regularMarketChangePercent", 0)
-                send_message(chat_id, f"📊 {symbol}: {prezzo}$ ({round(variazione, 2)}%)")
-            except Exception as e:
-                send_message(chat_id, f"⚠️ Errore nel recupero dati: {e}")
-
-    elif text == "analisi":
-        send_message(chat_id, "📈 Analizzo i dati in corso...")
-        try:
-            dati = sheet.get_all_records()
-            testo = json.dumps(dati, indent=2, ensure_ascii=False)
-            risposta = client.chat.completions.create(
-                model="gpt-4o-mini",
-                messages=[
-                    {"role": "system", "content": "Sei un analista finanziario conciso e accurato."},
-                    {"role": "user", "content": f"Analizza questi dati:\n{testo}"}
-                ]
-            )
-            send_message(chat_id, risposta.choices[0].message.content.strip())
-        except Exception as e:
-            send_message(chat_id, f"Errore: {e}")
-
-    elif text == "portafoglio":
-        try:
-            dati = sheet.get_all_records()
-            azioni = [r for r in dati if r.get("Ticker")]
-            msg = "📘 <b>Portafoglio Attuale</b>:\n"
-            for a in azioni:
-                msg += f"• {a['Ticker']}: {a['Quantità']} azioni a {a['Prezzo medio']} USD\n"
-            send_message(chat_id, msg)
-        except Exception as e:
-            send_message(chat_id, f"Errore lettura portafoglio: {e}")
-
-    elif text == "report":
-        send_message(chat_id, "🧠 Genero il report globale...")
-        try:
-            genera_report_giornaliero(chat_id)
-        except Exception as e:
-            send_message(chat_id, f"Errore nel report: {e}")
-
+            telegram_send_message(chat_id, "Usa /price TICKER (es. /price AAPL)")
+    elif text.startswith("/chart"):
+        parts = text.split()
+        if len(parts) >= 2:
+            send_chart_for_chat(chat_id, parts[1].upper())
+        else:
+            telegram_send_message(chat_id, "Usa /chart TICKER")
+    elif text.startswith("/analisi"):
+        parts = text.split()
+        if len(parts) >= 2:
+            send_analysis_for_chat(chat_id, parts[1].upper())
+        else:
+            telegram_send_message(chat_id, "Usa /analisi TICKER")
+    elif text.startswith("/portfolio"):
+        send_portfolio(chat_id)
+    elif text.startswith("/report"):
+        genera_report_giornaliero(chat_id)
     else:
-        send_message(chat_id, "💡 Comandi disponibili:\n/start\nsaldo\nanalisi\nprezzo <titolo>\ngrafico <titolo>\nportafoglio\nreport")
+        # Chat AI contestuale
+        append_user_context(chat_id, "user", text)
+        context = get_user_context(chat_id)
+        messages = [{"role": "system", "content": "Sei AngelBot, un AI che risponde in italiano in modo sintetico e chiaro."}] + context
+        response = ask_openai_text("\n".join([m["content"] for m in messages]), max_tokens=150)
+        append_user_context(chat_id, "assistant", response)
+        telegram_send_message(chat_id, response)
 
     return "ok", 200
 
-# === AVVIO SERVER + THREAD REPORT ===
+@app.route("/")
+def home():
+    return f"AngelBot attivo {datetime.now(TZ_ITALY).strftime('%d/%m %H:%M')} 🇮🇹"
+
+# Avvio thread per report automatico (giornaliero ogni 24 ore)
+def start_report_thread():
+    def loop():
+        while True:
+            genera_report_giornaliero()
+            logger.info("Report giornaliero completato.")
+            import time
+            time.sleep(24 * 3600)  # ogni 24 ore
+    th = threading.Thread(target=loop, daemon=True)
+    th.start()
+
 if __name__ == "__main__":
-    import threading
-    threading.Thread(target=avvia_report_programmato, daemon=True).start()
-    port = int(os.environ.get("PORT", 10000))
-    app.run(host="0.0.0.0", port=port)
+    start_report_thread()
+    app.run(host="0.0.0.0", port=int(os.getenv("PORT", 5000)))
