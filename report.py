@@ -268,3 +268,16 @@ def send_portfolio(chat_id: str):
 # If someone imports the module directly, nothing runs (functions are called by app.py)
 if __name__ == "__main__":
     print("report.py module — import into app.py")
+
+
+def genera_report_giornaliero():
+    """
+    Funzione di esempio che genera un report giornaliero.
+    Puoi personalizzare la logica secondo le tue necessità!
+    """
+    # Esempio: restituisci una stringa o genera il vero report
+    return "Report giornaliero generato!"
+
+# If someone imports the module directly, nothing runs (functions are called by app.py)
+if __name__ == "__main__":
+    print("report.py module — import into app.py")
