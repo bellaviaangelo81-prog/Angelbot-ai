@@ -8,6 +8,11 @@ from openai import OpenAI
 
 app = Flask(__name__)
 
+# === HOMEPAGE ROUTE ===
+@app.route("/", methods=["GET"])
+def home():
+    return "Angelbot-ai è attivo!", 200
+
 # === VARIABILI DI AMBIENTE ===
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
