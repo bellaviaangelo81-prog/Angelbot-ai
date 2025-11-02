@@ -134,6 +134,121 @@ def run_scheduler():
         time.sleep(30)
 
 
+# ==============================================
+# SEZIONE EXTRA: nuove funzioni e comandi del bot
+# ==============================================
+
+import yfinance as yf
+import matplotlib.pyplot as plt
+import pandas as pd
+import numpy as np
+import schedule
+import threading
+import time
+from io import BytesIO
+from openai import OpenAI
+
+# Inizializza client OpenAI
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
+client = OpenAI(api_key=OPENAI_API_KEY)
+
+# Funzione per inviare messaggi su Telegram (se non esiste già)
+def send_message(chat_id, text):
+    url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
+    payload = {"chat_id": chat_id, "text": text}
+    requests.post(url, json=payload)
+
+def send_photo(chat_id, photo_bytes):
+    url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendPhoto"
+    files = {"photo": ("graph.png", photo_bytes)}
+    data = {"chat_id": chat_id}
+    requests.post(url, files=files, data=data)
+
+
+# ==============================================
+# Comandi extra
+# ==============================================
+
+def ask_gpt(prompt):
+    """Risponde a domande usando GPT"""
+    try:
+        completion = client.chat.completions.create(
+            model="gpt-4o-mini",
+            messages=[
+                {"role": "system", "content": "Sei un assistente Telegram intelligente e amichevole."},
+                {"role": "user", "content": prompt}
+            ]
+        )
+        return completion.choices[0].message.content
+    except Exception as e:
+        return f"Errore GPT: {e}"
+
+
+def get_stock_info(symbol):
+    """Recupera dati azionari e grafico"""
+    try:
+        data = yf.Ticker(symbol)
+        hist = data.history(period="1mo")
+
+        plt.figure()
+        hist["Close"].plot(title=f"Andamento {symbol}")
+        buf = BytesIO()
+        plt.savefig(buf, format="png")
+        buf.seek(0)
+        plt.close()
+
+        price = hist["Close"].iloc[-1]
+        return price, buf
+    except Exception:
+        return None, None
+
+
+# ==============================================
+# Integrazione con il webhook esistente
+# ==============================================
+
+@app.route('/extra', methods=['POST'])
+def extra_webhook():
+    update = request.get_json()
+    if "message" in update:
+        chat_id = update["message"]["chat"]["id"]
+        text = update["message"].get("text", "")
+
+        if text.startswith("/ai "):
+            prompt = text.replace("/ai ", "")
+            reply = ask_gpt(prompt)
+            send_message(chat_id, reply)
+
+        elif text.startswith("/stock "):
+            symbol = text.replace("/stock ", "").upper().strip()
+            price, graph = get_stock_info(symbol)
+            if price:
+                send_message(chat_id, f"📈 Prezzo attuale di {symbol}: {price:.2f} USD")
+                send_photo(chat_id, graph)
+            else:
+                send_message(chat_id, "Errore nel recupero dati per quel simbolo.")
+
+        elif text.startswith("/remind"):
+            send_message(chat_id, "🔔 Notifiche automatiche attivate (ogni ora)")
+            schedule.every(1).hours.do(lambda: send_message(chat_id, "Promemoria automatico da AngelBot 🕐"))
+            threading.Thread(target=run_scheduler, daemon=True).start()
+
+        elif text.startswith("/help"):
+            send_message(chat_id, "Comandi:\n/start\n/ai [domanda]\n/stock [ticker]\n/remind")
+
+        else:
+            send_message(chat_id, "Comando non riconosciuto. Usa /help per la lista completa.")
+
+    return "OK", 200
+
+
+def run_scheduler():
+    """Esegue i reminder periodici"""
+    while True:
+        schedule.run_pending()
+        time.sleep(30)
+
+
 # ==============================
 # Avvio app Flask
 # ==============================
