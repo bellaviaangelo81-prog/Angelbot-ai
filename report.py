@@ -1,4 +1,3 @@
-# report.py
 import os
 import io
 import json
@@ -265,19 +264,32 @@ def send_portfolio(chat_id: str):
         lines.append(f"{t}: qty {qty} — prezzo {price:.2f}$ — valore {val:.2f}$")
     telegram_send_message(chat_id, f"💼 Portafoglio (totale ~ {total_value:.2f}$)\n" + "\n".join(lines))
 
-# If someone imports the module directly, nothing runs (functions are called by app.py)
-if __name__ == "__main__":
-    print("report.py module — import into app.py")
-
-
-def genera_report_giornaliero():
+def genera_report_giornaliero(chat_id=None):
     """
-    Funzione di esempio che genera un report giornaliero.
-    Puoi personalizzare la logica secondo le tue necessità!
+    Funzione che genera un report giornaliero. Se chat_id è fornito,
+    invia il report alla chat Telegram, altrimenti lo salva/logga.
     """
-    # Esempio: restituisci una stringa o genera il vero report
-    return "Report giornaliero generato!"
+    # Esempio di report basato sul portafoglio degli utenti
+    users = load_user_data()
+    report_lines = []
+    for uid, udata in users.items():
+        nome = udata.get("name", f"ID {uid}")
+        portfolio = udata.get("portfolio", [])
+        total_value = 0.0
+        for it in portfolio:
+            t = it.get("ticker")
+            qty = float(it.get("qty", 0))
+            price = get_current_price(t) or 0.0
+            val = qty * price
+            total_value += val
+        report_lines.append(f"• {nome}: valore totale portafoglio stimato {total_value:.2f}$")
+    testo_report = "🗞️ <b>Report giornaliero portafogli utenti:</b>\n" + "\n".join(report_lines)
+    # Se il report è richiesto da una chat Telegram, invia il report lì
+    if chat_id:
+        telegram_send_message(chat_id, testo_report)
+    else:
+        logger.info(testo_report)
+    return testo_report
 
-# If someone imports the module directly, nothing runs (functions are called by app.py)
 if __name__ == "__main__":
     print("report.py module — import into app.py")
