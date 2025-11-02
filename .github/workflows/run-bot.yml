@@ -1,4 +1,4 @@
-name: Run Angelbot AI
+name: bot di corsa
 
 on:
   push:
@@ -6,32 +6,32 @@ on:
   workflow_dispatch:
 
 jobs:
-  run-bot:
+  run:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v3
+    - name: Imposta lavoro
+      uses: actions/checkout@v3
 
-      - name: Setup Python
-        uses: actions/setup-python@v4
-        with:
-          python-version: '3.12'
+    - name: Imposta Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.12'
 
-      - name: Install dependencies
-        run: |
-          python -m pip install --upgrade pip
-          pip install -r requirements.txt
+    - name: Installa le dipendenze
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
 
-      - name: Run Flask bot
-        env:
-          TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
-          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
-          GOOGLE_SHEETS_KEY: ${{ secrets.GOOGLE_SHEETS_KEY }}
-          WEBHOOK_URL: ${{ secrets.WEBHOOK_URL }}
-        run: |
-        run: |
-  python app.py || true
-  - name: Mostra log di errore
-  run: |
-    cat nohup.out || true
+    - name: Esegui Flask bot
+      env:
+        TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
+        OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+        GOOGLE_SHEETS_KEY: ${{ secrets.GOOGLE_SHEETS_KEY }}
+        WEBHOOK_URL: ${{ secrets.WEBHOOK_URL }}
+      run: |
+        python app.py || true
+
+    - name: Mostra log di errore
+      run: |
+        cat nohup.out || true
